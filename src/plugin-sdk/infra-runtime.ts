@@ -145,7 +145,6 @@ export {
   resolveExecApprovalsTranscriptPath,
   resolveExecApprovalUnavailableDecisions,
   resolveExecModeFromPolicy,
-  resolveExecModePolicy,
   resolveExecPolicyForMode,
   resolveExecutableTrustPath,
   resolveExecutionTargetCandidatePath,
