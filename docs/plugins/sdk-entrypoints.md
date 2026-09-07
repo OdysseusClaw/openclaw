@@ -22,6 +22,16 @@ plugin supports.
   [Provider Plugins](/plugins/sdk-provider-plugins) for step-by-step guides.
 </Tip>
 
+## Sandbox bind parsing
+
+`openclaw/plugin-sdk/sandbox-bind-spec` exports
+`splitSandboxBindSpec(spec, options?)`. It returns raw `{ host, container, options }`
+segments, or `null` when no host/container separator exists. Windows host drive
+prefixes are always preserved. Pass `{ allowWindowsContainerPath: true }` to
+preserve drive prefixes in container paths too, as Policy does for its existing
+Windows bind grammar. The default keeps POSIX container parsing unchanged.
+This helper splits text; it does not validate or authorize a mount.
+
 ## Package entries
 
 Installed plugins point `package.json` `openclaw` fields at both source and
