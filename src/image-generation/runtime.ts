@@ -7,8 +7,8 @@ import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { parseImageGenerationModelRef } from "../media-generation/model-ref.js";
 import {
-  getImageGenerationProvider,
-  listImageGenerationProviders,
+  getImageGenerationProviderCore,
+  listImageGenerationProvidersCore,
 } from "../media-generation/registry.js";
 import {
   buildMediaGenerationNormalizationMetadata,
@@ -19,6 +19,7 @@ import {
   resolveMediaProviderRequestTimeoutMs,
   throwCapabilityGenerationFailure,
 } from "../media-generation/runtime-shared.js";
+import { withPluginRegistryResourceOperationAsync } from "../plugins/registry-resources.js";
 import { getProviderEnvVars } from "../secrets/provider-env-vars.js";
 import { resolveImageGenerationMaxInputImages } from "./capabilities.js";
 import { resolveImageGenerationOverrides } from "./normalization.js";
@@ -31,8 +32,8 @@ const log = createSubsystemLogger("image-generation");
 // the plugin registry and provider-env helpers by default.
 /** Dependency seam used by image-generation runtime tests and plugin host callers. */
 type ImageGenerationRuntimeDeps = {
-  getProvider?: typeof getImageGenerationProvider;
-  listProviders?: typeof listImageGenerationProviders;
+  getProvider?: typeof getImageGenerationProviderCore;
+  listProviders?: typeof listImageGenerationProvidersCore;
   getProviderEnvVars?: typeof getProviderEnvVars;
   log?: Pick<typeof log, "warn">;
 };
@@ -43,7 +44,7 @@ function buildNoImageGenerationModelConfiguredMessage(
   cfg: OpenClawConfig,
   deps: ImageGenerationRuntimeDeps,
 ): string {
-  const listProviders = deps.listProviders ?? listImageGenerationProviders;
+  const listProviders = deps.listProviders ?? listImageGenerationProvidersCore;
   return buildNoCapabilityModelConfiguredMessage({
     capabilityLabel: "image-generation",
     modelConfigKey: "mediaModels.image",
@@ -53,19 +54,26 @@ function buildNoImageGenerationModelConfiguredMessage(
 }
 
 /** Lists image-generation providers visible for the current config. */
-export function listRuntimeImageGenerationProviders(
+export function listRuntimeImageGenerationProvidersCore(
   params?: { config?: OpenClawConfig },
   deps: ImageGenerationRuntimeDeps = {},
 ) {
-  return (deps.listProviders ?? listImageGenerationProviders)(params?.config);
+  return (deps.listProviders ?? listImageGenerationProvidersCore)(params?.config);
 }
 
 export async function generateImage(
   params: GenerateImageParams,
   deps: ImageGenerationRuntimeDeps = {},
 ): Promise<GenerateImageRuntimeResult> {
-  const getProvider = deps.getProvider ?? getImageGenerationProvider;
-  const listProviders = deps.listProviders ?? listImageGenerationProviders;
+  return withPluginRegistryResourceOperationAsync(() => generateImageWithResources(params, deps));
+}
+
+async function generateImageWithResources(
+  params: GenerateImageParams,
+  deps: ImageGenerationRuntimeDeps,
+): Promise<GenerateImageRuntimeResult> {
+  const getProvider = deps.getProvider ?? getImageGenerationProviderCore;
+  const listProviders = deps.listProviders ?? listImageGenerationProvidersCore;
   const logger = deps.log ?? log;
   const requestedTimeoutMs =
     params.timeoutMs ??

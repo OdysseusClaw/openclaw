@@ -81,12 +81,13 @@ function completionDeps(replyText: string, binding: SystemAgentVerifiedInference
     resolveVerifiedInferenceRoute: vi.fn<
       NonNullable<SystemAgentApprovalIntentDeps["resolveVerifiedInferenceRoute"]>
     >(async () => route),
-    prepareSimpleCompletionModelForAgent: vi.fn<
-      NonNullable<SystemAgentApprovalIntentDeps["prepareSimpleCompletionModelForAgent"]>
+    acquireSimpleCompletionModelForAgent: vi.fn<
+      NonNullable<SystemAgentApprovalIntentDeps["acquireSimpleCompletionModelForAgent"]>
     >(
       async () =>
         ({
           model: {},
+          release: vi.fn(),
           auth: { profileId: route.authProfileId },
           sourceAuthFingerprint: binding.auth.authFingerprint,
           selection: {
@@ -97,8 +98,8 @@ function completionDeps(replyText: string, binding: SystemAgentVerifiedInference
           },
         }) as never,
     ),
-    completeWithPreparedSimpleCompletionModel: vi.fn<
-      NonNullable<SystemAgentApprovalIntentDeps["completeWithPreparedSimpleCompletionModel"]>
+    completeWithPreparedSimpleCompletionModelCore: vi.fn<
+      NonNullable<SystemAgentApprovalIntentDeps["completeWithPreparedSimpleCompletionModelCore"]>
     >(
       async () =>
         ({
@@ -136,7 +137,7 @@ describe("classifySystemAgentApprovalIntent", () => {
       classifySystemAgentApprovalIntent({ message: "yes", verifiedInference: binding }, deps),
     ).resolves.toBe("approve");
     expect(deps.resolveVerifiedInferenceRoute).not.toHaveBeenCalled();
-    expect(deps.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
+    expect(deps.completeWithPreparedSimpleCompletionModelCore).not.toHaveBeenCalled();
   });
 
   it("pins ambiguous approvals to the verified model and profile", async () => {
@@ -152,14 +153,14 @@ describe("classifySystemAgentApprovalIntent", () => {
         deps,
       ),
     ).resolves.toBe("approve");
-    expect(deps.prepareSimpleCompletionModelForAgent).toHaveBeenCalledWith(
+    expect(deps.acquireSimpleCompletionModelForAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         agentDir: binding.execution.agentDir,
         modelRef: "openai/gpt-5.5@openai:p2",
         preferredProfile: "openai:p2",
       }),
     );
-    expect(deps.completeWithPreparedSimpleCompletionModel).toHaveBeenCalledOnce();
+    expect(deps.completeWithPreparedSimpleCompletionModelCore).toHaveBeenCalledOnce();
   });
 
   it("fails closed to other on unexpected model output", async () => {
@@ -177,7 +178,7 @@ describe("classifySystemAgentApprovalIntent", () => {
     const binding = requireSharedVerifiedInference();
     const deps = {
       ...completionDeps("approve", binding),
-      prepareSimpleCompletionModelForAgent: vi.fn(async () => ({ error: "no model" })) as never,
+      acquireSimpleCompletionModelForAgent: vi.fn(async () => ({ error: "no model" })) as never,
     };
     await expect(
       classifySystemAgentApprovalIntent(
@@ -190,8 +191,9 @@ describe("classifySystemAgentApprovalIntent", () => {
   it("rejects a prepared auth owner that differs from the verified profile", async () => {
     const binding = requireSharedVerifiedInference();
     const deps = completionDeps("approve", binding);
-    deps.prepareSimpleCompletionModelForAgent.mockResolvedValueOnce({
+    deps.acquireSimpleCompletionModelForAgent.mockResolvedValueOnce({
       model: {},
+      release: vi.fn(),
       auth: { profileId: "openai:p1" },
       selection: {
         provider: "openai",
@@ -207,14 +209,15 @@ describe("classifySystemAgentApprovalIntent", () => {
         deps,
       ),
     ).resolves.toBe("other");
-    expect(deps.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
+    expect(deps.completeWithPreparedSimpleCompletionModelCore).not.toHaveBeenCalled();
   });
 
   it("rejects a same-profile credential rotation during preparation", async () => {
     const binding = requireSharedVerifiedInference();
     const deps = completionDeps("approve", binding);
-    deps.prepareSimpleCompletionModelForAgent.mockResolvedValueOnce({
+    deps.acquireSimpleCompletionModelForAgent.mockResolvedValueOnce({
       model: {},
+      release: vi.fn(),
       auth: { profileId: "openai:p2" },
       sourceAuthFingerprint: "different-p2-owner",
       selection: {
@@ -231,7 +234,7 @@ describe("classifySystemAgentApprovalIntent", () => {
         deps,
       ),
     ).resolves.toBe("other");
-    expect(deps.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
+    expect(deps.completeWithPreparedSimpleCompletionModelCore).not.toHaveBeenCalled();
   });
 
   it("keeps ambiguous CLI approvals on the exact-text path", async () => {
@@ -244,7 +247,7 @@ describe("classifySystemAgentApprovalIntent", () => {
         deps,
       ),
     ).resolves.toBe("other");
-    expect(deps.prepareSimpleCompletionModelForAgent).not.toHaveBeenCalled();
+    expect(deps.acquireSimpleCompletionModelForAgent).not.toHaveBeenCalled();
   });
 
   it("rejects a verdict when the verified owner drifts during classification", async () => {

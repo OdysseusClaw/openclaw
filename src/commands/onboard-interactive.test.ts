@@ -154,7 +154,7 @@ describe("runConversationalOnboarding", () => {
         },
       },
     });
-    mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue(registry);
+    mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue({ registry, release() {} });
     mocks.verifySetupInference.mockResolvedValue({
       ok: true,
       modelRef: fixture.binding.execution.modelLabel,

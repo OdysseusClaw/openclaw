@@ -335,7 +335,7 @@ describe("Computer Use provider registration", () => {
     expect(act).toHaveBeenCalledWith(paramsJSON, signal);
 
     const stop = commands[0]!.watchAvailability?.({ config: {} as never, env: {} }, vi.fn());
-    stop?.();
+    await stop?.();
     await vi.waitFor(() => expect(close).toHaveBeenCalledWith("node-host-stop"));
     expect(stopWatching).toHaveBeenCalledOnce();
   });

@@ -149,8 +149,11 @@ const defaultPublicDeprecatedExportsByEntrypointBudget = Object.freeze({
   // +4: legacy AgentHarness, attempt, embedded-run, and side-question contracts remain
   // deprecated while external harnesses migrate to required-capability V2 contracts.
   // +1: bounded structured-input compiler/executor for native harness protocol adapters.
-  "agent-harness": 2,
-  "agent-harness-runtime": 10,
+  // +1/+2: shipped middleware runner routes and runtime-plan builder retain legacy ownership.
+  "agent-harness": 3,
+  "agent-harness-runtime": 12,
+  // +1: shipped provider resolver remains available beside explicit acquisition.
+  "provider-catalog-runtime": 1,
   "command-auth": 78,
   discord: 47,
   // +4: deprecated media projection type, builder, and turn aliases.
@@ -358,7 +361,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +7: card projection plus three rendering helpers on channel-outbound and its shipped barrel.
       // +2: shared diff-stat rendering on channel-outbound and its shipped barrel.
       // +1: shared static UI guidance, separate from per-turn harness delivery policy.
-      4446,
+      // +5: plan/provider acquisitions, middleware acquisition through both harness routes,
+      // and the provider handle type expose explicit resource ownership.
+      4451,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -485,7 +490,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +7: card projection plus three rendering helpers on channel-outbound and its shipped barrel.
       // +2: shared diff-stat rendering on channel-outbound and its shipped barrel.
       // +1: shared static UI guidance, separate from per-turn harness delivery policy.
-      2630,
+      // +4: acquireAgentRuntimePlan, acquirePluginProviders, and
+      // acquireAgentToolResultMiddlewareRunner through both shipped harness routes.
+      2634,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
@@ -505,7 +512,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       //     Slack progress-draft render) so installed plugins survive upgrade (#124041 class).
       // -18: retire the expired August compatibility exports and messaging-targets subpath.
       // +4: rendering helpers forwarded by the shipped channel-message wildcard.
-      1138,
+      // +4: v2026.9.2 plan builder, provider resolver, and both middleware runner routes
+      // retain their shipped signatures while callers migrate to explicit acquisitions.
+      1142,
       env,
     ),
     publicWildcardReexports: readPluginSdkSurfaceBudgetEnv(

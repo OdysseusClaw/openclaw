@@ -763,7 +763,7 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
   }));
 
   vi.doMock("../runtime-plan/build.js", () => ({
-    buildAgentRuntimePlan: mockedBuildAgentRuntimePlan,
+    buildAgentRuntimePlanCore: mockedBuildAgentRuntimePlan,
   }));
 
   vi.doMock("../model-runtime-aliases.js", () => ({

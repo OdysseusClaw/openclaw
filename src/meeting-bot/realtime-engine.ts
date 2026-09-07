@@ -1,6 +1,11 @@
 // Shared meeting bot realtime engines own provider and audio-transport orchestration.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import {
+  PluginRegistryResourceScope,
+  createPluginRegistryResourceLease,
+  getPluginRegistryResourceScope,
+} from "../plugins/registry-resources.js";
 import type { PluginRuntime, RuntimeLogger } from "../plugins/runtime/types.js";
 import type { RealtimeVoiceProviderPlugin } from "../plugins/types.js";
 import type { RealtimeVoiceTool, RealtimeVoiceToolCallEvent } from "../talk/provider-types.js";
@@ -116,6 +121,37 @@ export async function startMeetingRealtimeEngine(params: {
   tools: RealtimeVoiceTool[];
   handleToolCall: (params: MeetingRealtimeToolCallParams) => Promise<void>;
 }): Promise<MeetingRealtimeAudioEngineHandle> {
+  const resources = createPluginRegistryResourceLease(
+    getPluginRegistryResourceScope()?.fork() ?? new PluginRegistryResourceScope(),
+  );
+  try {
+    return await resources.run(() => startMeetingRealtimeEngineWithResources(params, resources));
+  } catch (error) {
+    resources.release();
+    throw error;
+  }
+}
+
+async function startMeetingRealtimeEngineWithResources(
+  params: {
+    config: MeetingRealtimeEngineConfig;
+    fullConfig: OpenClawConfig;
+    runtime: PluginRuntime;
+    platform: MeetingRuntimePlatform;
+    meetingSessionId: string;
+    requesterSessionKey?: string;
+    logPrefix?: "node";
+    talkSessionId?: string;
+    talkContext?: { nodeId: string; bridgeId: string };
+    transport: MeetingRealtimeAudioTransport;
+    logger: RuntimeLogger;
+    providers?: RealtimeVoiceProviderPlugin[];
+    consultAgent: (params: MeetingAgentConsultParams) => Promise<{ text: string }>;
+    tools: RealtimeVoiceTool[];
+    handleToolCall: (params: MeetingRealtimeToolCallParams) => Promise<void>;
+  },
+  resources: ReturnType<typeof createPluginRegistryResourceLease>,
+): Promise<MeetingRealtimeAudioEngineHandle> {
   let stopped = false;
   let stopPromise: Promise<void> | undefined;
   let bridgeClosed = false;
@@ -168,44 +204,49 @@ export async function startMeetingRealtimeEngine(params: {
       await stopPromise;
       return;
     }
-    const cleanup = Promise.resolve().then(async () => {
-      if (!bridgeClosed) {
-        bridgeClosed = true;
-        harness.close();
-        try {
-          bridge?.close();
-        } catch (error) {
-          params.logger.debug?.(
-            `${params.platform.logScope} ${realtimeLogScope}${params.logPrefix ? "" : " voice"} bridge close ignored: ${formatErrorMessage(error)}`,
-          );
+    if (bridgeClosed && transportStopped && transportDisposed) {
+      return;
+    }
+    const cleanup = resources.run(() =>
+      Promise.resolve().then(async () => {
+        let cleanupError: unknown;
+        if (!bridgeClosed) {
+          harness.close();
+          try {
+            bridge?.close();
+            bridgeClosed = true;
+          } catch (error) {
+            cleanupError = error;
+          }
         }
-      }
-      let cleanupError: unknown;
-      if (!transportStopped) {
-        try {
-          await params.transport.stop();
-          transportStopped = true;
-        } catch (error) {
-          cleanupError = error;
+        if (!transportStopped) {
+          try {
+            await params.transport.stop();
+            transportStopped = true;
+          } catch (error) {
+            cleanupError ??= error;
+          }
         }
-      }
-      if (!transportDisposed) {
-        try {
-          await params.transport.dispose();
-          transportDisposed = true;
-        } catch (error) {
-          cleanupError ??= error;
+        if (!transportDisposed) {
+          try {
+            await params.transport.dispose();
+            transportDisposed = true;
+          } catch (error) {
+            cleanupError ??= error;
+          }
         }
-      }
-      if (cleanupError) {
-        throw cleanupError instanceof Error
-          ? cleanupError
-          : new Error("Meeting realtime transport cleanup failed", { cause: cleanupError });
-      }
-    });
+        // Failed provider closure keeps the same retry owner even after transport cleanup succeeds.
+        if (!bridgeClosed || !transportStopped || !transportDisposed) {
+          throw cleanupError instanceof Error
+            ? cleanupError
+            : new Error("Meeting realtime cleanup failed", { cause: cleanupError });
+        }
+      }),
+    );
     stopPromise = cleanup;
     try {
       await cleanup;
+      resources.release();
     } finally {
       if (stopPromise === cleanup) {
         stopPromise = undefined;
@@ -485,6 +526,7 @@ export async function startMeetingRealtimeEngine(params: {
   try {
     bridge = harness.createBridge({
       provider: resolved.provider,
+      runWithProviderResources: resources.run,
       cfg: params.fullConfig,
       agentId: params.config.realtime.agentId,
       providerConfig: resolved.providerConfig,
@@ -570,17 +612,19 @@ export async function startMeetingRealtimeEngine(params: {
       onEvent: lifecycleHandlers.onEvent,
       onResponseDone: lifecycleHandlers.onResponseDone,
       onToolCall: (event, session) =>
-        toolContinuity.run({
-          session,
-          call: {
-            strategy,
-            event,
-            meetingSessionId: params.meetingSessionId,
-            requesterSessionKey: params.requesterSessionKey,
-            transcript: harness.transcript,
-          },
-          harness,
-        }),
+        resources.run(() =>
+          toolContinuity.run({
+            session,
+            call: {
+              strategy,
+              event,
+              meetingSessionId: params.meetingSessionId,
+              requesterSessionKey: params.requesterSessionKey,
+              transcript: harness.transcript,
+            },
+            harness,
+          }),
+        ),
       onError: (error) => {
         // Provider errors may be recoverable; onClose owns terminal teardown.
         harness.emit({

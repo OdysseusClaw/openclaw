@@ -470,6 +470,7 @@ export async function runCodexAppServerSideQuestion(
   let sandboxEnvironmentClient: CodexAppServerClient | undefined;
   let nativeHookRelay: NativeHookRelayRegistrationHandle | undefined;
   const activeDynamicToolCalls = new Set<Promise<unknown>>();
+  let releaseToolBridge: (() => Promise<void>) | undefined;
   const releaseSandboxEnvironment = async () => {
     if (!sandboxEnvironment) {
       return;
@@ -549,6 +550,7 @@ export async function runCodexAppServerSideQuestion(
       runId,
       signal: runAbortController.signal,
     });
+    releaseToolBridge = toolBridge.release;
     // Auth refresh is client-owned; keep one shared handler per physical client.
     ensureCodexAppServerClientRuntime(client, {
       agentDir: params.agentDir,
@@ -1017,6 +1019,7 @@ export async function runCodexAppServerSideQuestion(
       // Drain their abort races before unsubscribe so late diagnostics cannot leak
       // into the next side run.
       await Promise.allSettled(activeDynamicToolCalls);
+      await releaseToolBridge?.();
       try {
         await cleanupCodexSideThread(childClient ?? client, {
           threadId: childThreadId,

@@ -5,7 +5,6 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
 import { createHookRunner } from "./hooks.js";
 import { loadInstalledPluginIndex } from "./installed-plugin-index.js";
-import { loadOpenClawPlugins } from "./loader.js";
 import {
   EMPTY_PLUGIN_SCHEMA,
   makePluginLoaderTempDir,
@@ -13,6 +12,7 @@ import {
   useNoBundledPlugins,
   writePlugin,
 } from "./loader.test-fixtures.js";
+import { loadOpenClawPluginsForTest as loadOpenClawPlugins } from "./loader.test-handles.js";
 import {
   withStateDir,
   loadRegistryFromSinglePlugin,

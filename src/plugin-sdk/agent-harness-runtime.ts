@@ -35,6 +35,7 @@ import {
   isStructuredInputRecord,
   snapshotStructuredInput,
 } from "../agents/harness/structured-input.js";
+import { buildAgentRuntimePlanCore } from "../agents/runtime-plan/build.js";
 import type { SandboxFsBridge } from "../agents/sandbox/fs-bridge.js";
 import { inferToolMetaFromArgsCore } from "../agents/tool-display.js";
 import {
@@ -45,7 +46,12 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ImageContent } from "../llm/types.js";
 import { redactToolDetail } from "../logging/redact.js";
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
+import {
+  PluginRegistryResourceScope,
+  createPluginRegistryResourceLease,
+} from "../plugins/registry-resources.js";
 import { truncateUtf16Safe } from "../utils.js";
+import { withLegacyPluginSdkResourceScope } from "./legacy-registry-resource-scope.js";
 
 /** Default truncation limit for user-facing tool progress output. */
 export const TOOL_PROGRESS_OUTPUT_MAX_CHARS = 8_000;
@@ -210,7 +216,29 @@ export { runAgentCleanupStep } from "../agents/run-cleanup-timeout.js";
 export { resolveAgentRunAbortLifecycleFields } from "../agents/run-termination.js";
 export { isHostScopedAgentToolActive } from "../agents/agent-tools.ring-zero-context.js";
 export { log as embeddedAgentLog } from "../agents/embedded-agent-runner/logger.js";
-export { buildAgentRuntimePlan } from "../agents/runtime-plan/build.js";
+/**
+ * Retains a plan's provider callbacks until release. Use run for callback work so
+ * accepted promises drain before disposal. Caller-supplied handles remain caller-owned.
+ */
+export function acquireAgentRuntimePlan(params: Parameters<typeof buildAgentRuntimePlanCore>[0]) {
+  const resources = new PluginRegistryResourceScope();
+  try {
+    const plan = resources.run(() => buildAgentRuntimePlanCore(params));
+    return { plan, ...createPluginRegistryResourceLease(resources) };
+  } catch (error) {
+    resources.release();
+    throw error;
+  }
+}
+
+/**
+ * @deprecated Use acquireAgentRuntimePlan with run/release for explicit callback ownership.
+ * Legacy plans retain providers until host close/restart, or standalone process exit.
+ * The host must join externally invoked plan callbacks before closing.
+ */
+export function buildAgentRuntimePlan(params: Parameters<typeof buildAgentRuntimePlanCore>[0]) {
+  return withLegacyPluginSdkResourceScope(() => buildAgentRuntimePlanCore(params));
+}
 export { prepareAgentRuntimeAuth } from "../agents/runtime-plan/prepare-auth.js";
 export { classifyEmbeddedAgentRunResultForModelFallback } from "../agents/embedded-agent-runner/result-fallback-classifier.js";
 export { resolveUserPath } from "../utils.js";
@@ -507,7 +535,10 @@ export {
   runAgentHarnessBeforeCompactionHook,
 } from "../agents/harness/prompt-compaction-hook-helpers.js";
 export { createCodexAppServerToolResultExtensionRunner } from "../agents/harness/codex-app-server-extensions.js";
-export { createAgentToolResultMiddlewareRunner } from "../agents/harness/tool-result-middleware.js";
+export {
+  acquireAgentToolResultMiddlewareRunner,
+  createAgentToolResultMiddlewareRunner,
+} from "./agent-tool-result-middleware-runtime.js";
 export {
   assertContextEngineHostSupport,
   CODEX_APP_SERVER_CONTEXT_ENGINE_HOST,

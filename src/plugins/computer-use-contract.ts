@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { type Static, type TSchema, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type {
@@ -549,7 +550,7 @@ export type ComputerUseProvider = {
   watchAvailability?: (
     context: OpenClawPluginNodeHostCommandAvailabilityContext,
     onChange: () => void,
-  ) => (() => void) | void;
+  ) => (() => void | Promise<void>) | void;
   openExecution(context: {
     executionId: string;
     sessionKey?: string;
@@ -570,6 +571,7 @@ export function registerComputerUseProvider(
 ): void {
   let execution: { id: string; promise: Promise<ComputerUseExecution> } | undefined;
   let closingPromise: Promise<void> = Promise.resolve();
+  let pendingClose: Promise<void> | undefined;
 
   const executionEnvelopeFromParams = (paramsJSON: string | null | undefined) => {
     let value: unknown;
@@ -620,18 +622,39 @@ export function registerComputerUseProvider(
     }
     return execution.promise;
   };
-  const closeExecution = async (executionId: string | undefined, reason: string) => {
-    await closingPromise;
+  const closeExecution = (executionId: string | undefined, reason: string): Promise<void> => {
     const current = execution;
-    if (!current || (executionId !== undefined && current.id !== executionId)) {
-      return;
+    if (executionId !== undefined && current?.id !== executionId) {
+      // A foreign close is a no-op; it does not inherit another execution's cleanup error.
+      return closingPromise.catch(() => {});
     }
-    execution = undefined;
-    if (current) {
-      const close = current.promise.then(async (opened) => await opened.close(reason));
-      closingPromise = close.catch(() => {});
-      await close;
+    if (pendingClose) {
+      return pendingClose;
     }
+    if (!current) {
+      return closingPromise;
+    }
+    // Publish before yielding: watcher stop and disconnect must join the same physical close.
+    const close = current.promise.then(async (opened) => await opened.close(reason));
+    pendingClose = close;
+    closingPromise = close;
+    void close.then(
+      () => {
+        if (execution === current) {
+          execution = undefined;
+        }
+        pendingClose = undefined;
+        closingPromise = Promise.resolve();
+      },
+      () => {
+        pendingClose = undefined;
+        // Failed open owns no execution; failed physical close retains its owner for close retry.
+        if (execution !== current) {
+          closingPromise = Promise.resolve();
+        }
+      },
+    );
+    return close;
   };
 
   api.registerNodeHostCommand({
@@ -643,8 +666,10 @@ export function registerComputerUseProvider(
     watchAvailability: (context, onChange) => {
       const stopWatching = provider.watchAvailability?.(context, onChange);
       return () => {
-        stopWatching?.();
-        void closeExecution(undefined, "node-host-stop");
+        const stopped = stopWatching?.();
+        return isPromiseLike(stopped)
+          ? Promise.resolve(stopped).then(() => closeExecution(undefined, "node-host-stop"))
+          : closeExecution(undefined, "node-host-stop");
       };
     },
     onDisconnect: async () => await closeExecution(undefined, "gateway-disconnect"),

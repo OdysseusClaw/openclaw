@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { installTemporaryCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import * as discovery from "../plugins/discovery.js";
 import * as loader from "../plugins/loader.js";
+import { loadPluginRegistryHandleForTest } from "../plugins/loader.test-handles.js";
 import { loadPluginManifestRegistryForInstalledIndex } from "../plugins/manifest-registry-installed.js";
 import { restorePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -111,7 +112,7 @@ describe("transcript setup metadata boundary", () => {
       };
       try {
         const before = await readStatus();
-        const scoped = loader.loadPluginRegistryHandle({
+        const scoped = loadPluginRegistryHandleForTest({
           config: cfg,
           env: state.env,
           onlyPluginIds: [pluginId],

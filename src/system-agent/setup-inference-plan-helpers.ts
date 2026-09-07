@@ -447,28 +447,36 @@ export function canonicalizeSetupModelRef(params: {
   return resolved ? `${resolved.ref.provider}/${resolved.ref.model}` : params.raw;
 }
 
+export function normalizePreparedProviderModelRef(
+  modelRef: string,
+  provider: ProviderPlugin,
+): string {
+  const ref = parseRef(modelRef);
+  // Auth starters are raw provider input; guided discovery already chose its canonical model.
+  ref.model =
+    normalizeOptionalString(
+      provider.normalizeModelId?.({
+        provider: ref.provider,
+        modelId: ref.model,
+      }),
+    ) ?? ref.model;
+  return `${ref.provider}/${ref.model}`;
+}
+
 export function buildPreparedProviderTestPlan(params: {
   cfg: OpenClawConfig;
   sourceCfg: OpenClawConfig;
   preparedConfig: OpenClawConfig;
   profiles: ProviderAuthResult["profiles"];
   selectedProfileId?: string;
-  providerPlugin?: ProviderPlugin;
   modelRef: string;
+  targetModelRef?: string;
   pluginId?: string;
   routeAgentId: string;
   agentDir: string;
   pendingPluginInstalls?: Record<string, PluginInstallRecord>;
 }): SetupInferenceTestPlan {
-  const ref = parseRef(params.modelRef);
-  // Auth starters are raw provider input; guided discovery already chose its canonical model.
-  ref.model =
-    normalizeOptionalString(
-      params.providerPlugin?.normalizeModelId?.({
-        provider: ref.provider,
-        modelId: ref.model,
-      }),
-    ) ?? ref.model;
+  const ref = parseRef(params.targetModelRef ?? params.modelRef);
   const modelRef = `${ref.provider}/${ref.model}`;
   const projection = {
     baseConfig: params.cfg,

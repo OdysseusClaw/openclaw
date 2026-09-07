@@ -13,7 +13,6 @@ import {
   listRegisteredEmbeddingProviders,
 } from "./embedding-providers.js";
 import { getGlobalHookRunner } from "./hook-runner-global.js";
-import { loadOpenClawPlugins, type PluginLoadOptions } from "./loader.js";
 import {
   cleanupPluginLoaderFixturesForTest,
   EMPTY_PLUGIN_SCHEMA,
@@ -25,6 +24,10 @@ import {
   useNoBundledPlugins,
   writePlugin,
 } from "./loader.test-fixtures.js";
+import {
+  loadOpenClawPluginsForTest as loadOpenClawPlugins,
+  type PluginLoadOptions,
+} from "./loader.test-handles.js";
 
 export const getEmbeddingProvider = (id: string) => getRegisteredEmbeddingProvider(id)?.adapter;
 

@@ -24,6 +24,7 @@ import {
 } from "./dynamic-tool-profile.js";
 import {
   createCodexDynamicToolBridge,
+  type CodexDynamicToolBridge,
   projectCodexExecutableDynamicTools,
 } from "./dynamic-tools.js";
 import { hasCodexNativeToolCatalog, loadCodexNativeToolCatalog } from "./native-tool-catalog.js";
@@ -428,7 +429,9 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
   // Specs come from the session advertised-catalog cache so fingerprints stay stable.
   let scopedMcpTools: Awaited<ReturnType<typeof materializeRequesterScopedMcpToolsForHarnessRun>> =
     undefined;
+  let toolBridge: CodexDynamicToolBridge | undefined;
   const disposeMcpTools = async () => {
+    await toolBridge?.release();
     for (const [step, materialized] of [
       ["codex-scoped-mcp-dispose", scopedMcpTools],
       ["codex-configured-mcp-dispose", configuredMcp],
@@ -510,7 +513,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
         ? { turnSourceThreadId: params.currentThreadTs }
         : {}),
     };
-    const toolBridge = createCodexDynamicToolBridge({
+    const preparedToolBridge = createCodexDynamicToolBridge({
       tools: toolsWithScopedMcp,
       registeredTools: registeredWithScopedMcp,
       registeredSpecs: nativeSpecs,
@@ -526,11 +529,12 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
       ),
       hookContext,
     });
+    toolBridge = preparedToolBridge;
     const captureCronCreatorToolAllowlist = async () => {
       await captureFinalCodexCronCreatorToolAllowlist(
         cronCreatorToolAllowlist,
         cronCreatorToolAllowlistCaptureRef,
-        toolBridge.availableTools,
+        preparedToolBridge.availableTools,
         { nativeToolSurfaceEnabled },
       );
       if (
@@ -582,7 +586,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
                 agentDir: policyContext.agentDir,
                 cfg: params.config,
                 manifestRegistry: bundleManifestRegistry,
-                reservedToolNames: toolBridge.availableTools.map((tool) => tool.name),
+                reservedToolNames: preparedToolBridge.availableTools.map((tool) => tool.name),
                 toolsAllow: params.toolsAllow,
                 toolOverrides: codexMcpToolOverrides,
                 autoApproveCodexAppServerApprovals: shouldAutoApproveCodexAppServerApprovals(
@@ -619,7 +623,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
           await captureFinalCodexCronCreatorToolAllowlist(
             authorityTools,
             captureRef,
-            [...toolBridge.availableTools, ...configuredTools],
+            [...preparedToolBridge.availableTools, ...configuredTools],
             { nativeToolSurfaceEnabled },
           );
           if (!captureRef.value) {
@@ -651,7 +655,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
       compactionPlanState,
       computerContextEpoch,
       runCleanups,
-      toolBridge,
+      toolBridge: preparedToolBridge,
       toolState,
       toolOutcomeOrdinals,
       suppressedDynamicToolOutcomeOrdinals,

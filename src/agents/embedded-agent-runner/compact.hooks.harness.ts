@@ -1054,7 +1054,7 @@ export async function loadCompactHooksHarness(options: { durableSession?: boolea
   }));
 
   vi.doMock("../runtime-plan/build.js", () => ({
-    buildAgentRuntimePlan: buildAgentRuntimePlanMock,
+    buildAgentRuntimePlanCore: buildAgentRuntimePlanMock,
     resolvePreparedProviderRuntimeHandle: vi.fn(
       ({ providerRuntimeHandle, provider, modelId, workspaceDir }: BuildAgentRuntimePlanParams) =>
         providerRuntimeHandle ?? { provider, modelId, workspaceDir, prepared: true },

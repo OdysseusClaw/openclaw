@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { withEnv } from "../test-utils/env.js";
-import { loadOpenClawPlugins } from "./loader.js";
 import {
   cleanupPluginLoaderFixturesForTest,
   loadBundleFixture,
@@ -12,6 +11,7 @@ import {
   resetPluginLoaderTestStateForTest,
   useNoBundledPlugins,
 } from "./loader.test-fixtures.js";
+import { loadOpenClawPluginsForTest as loadOpenClawPlugins } from "./loader.test-handles.js";
 
 function expectNoUnwiredBundleDiagnostic(
   registry: ReturnType<typeof loadOpenClawPlugins>,

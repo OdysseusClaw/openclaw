@@ -600,13 +600,13 @@ export function buildGatewayCronService(params: {
     });
   const sessionStorePath = resolveSessionStorePath(defaultAgentId);
   const cronTriggersEnabled = params.cfg.cron?.triggers?.enabled !== false;
-  const scriptRuntime = cronTriggersEnabled
-    ? createCronScriptRuntime({
-        config: params.cfg,
-        loadPluginRegistry: loadPreparedInboundPluginRegistry,
-        resolveGatewayContext: scheduledGatewayContextResolver,
-      })
-    : undefined;
+  const createScriptRuntime = () =>
+    createCronScriptRuntime({
+      config: params.cfg,
+      loadPluginRegistry: loadPreparedInboundPluginRegistry,
+      resolveGatewayContext: scheduledGatewayContextResolver,
+    });
+  const scriptRuntime = cronTriggersEnabled ? { current: createScriptRuntime() } : undefined;
 
   const runCronChangedHook = (evt: PluginHookCronChangedEvent) => {
     const hookRunner = getGlobalHookRunner();
@@ -795,7 +795,13 @@ export function buildGatewayCronService(params: {
     cronEnabled,
     cronConfig: params.cfg.cron,
     listConfiguredChannels: () => listConfiguredMessageChannels(getRuntimeConfig()),
-    ...(scriptRuntime ? { evaluateCronTrigger: scriptRuntime.evaluateTrigger } : {}),
+    ...(scriptRuntime
+      ? {
+          evaluateCronTrigger: (
+            invocation: Parameters<typeof scriptRuntime.current.evaluateTrigger>[0],
+          ) => scriptRuntime.current.evaluateTrigger(invocation),
+        }
+      : {}),
     ...(defaultAgentId ? { defaultAgentId } : {}),
     ...(legacyDefaultAgentId ? { legacyDefaultAgentId } : {}),
     resolveDefaultAgentId: () => tryResolveAmbientOwnerAgentId(getRuntimeConfig()),
@@ -993,7 +999,7 @@ export function buildGatewayCronService(params: {
           ...cronScriptFailureMetadata("payload", "runtime_unavailable"),
         };
       }
-      const execution = await scriptRuntime.executePayload({
+      const execution = await scriptRuntime.current.executePayload({
         job,
         streamBatch,
         abortSignal,
@@ -1504,9 +1510,17 @@ export function buildGatewayCronService(params: {
   };
   const automationEpoch = claimSessionAutomationEpoch();
   const stopCron = cron.stop.bind(cron);
+  let scriptRuntimeStop: Promise<void> | undefined;
+  const stopScriptRuntime = () => {
+    scriptRuntimeStop ??= scriptRuntime?.current.dispose() ?? Promise.resolve();
+    return scriptRuntimeStop;
+  };
   const stopCronLifecycle = (preserveExitWatchers = false) => {
     try {
       stopCron();
+      void stopScriptRuntime().catch((error: unknown) => {
+        cronLogger.warn({ err: formatErrorMessage(error) }, "cron: script resource cleanup failed");
+      });
       if (preserveExitWatchers) {
         // A committed replacement owns these children; fence this scheduler
         // without terminating the adopted manager.
@@ -1543,6 +1557,7 @@ export function buildGatewayCronService(params: {
       waitForActiveCronTaskRuns(CRON_ACTIVE_RUN_SHUTDOWN_DRAIN_MS),
       exitWatchersStop,
       streamWatchersStop,
+      stopScriptRuntime(),
     ]);
     if (!activeRunDrain.drained) {
       cronLogger.warn(
@@ -1619,9 +1634,13 @@ export function buildGatewayCronService(params: {
     const streamGeneration = streamWatcherGeneration;
     const lifecycleChanged = () =>
       exitGeneration !== exitWatcherGeneration || streamGeneration !== streamWatcherGeneration;
-    await exitWatchersStopPromise;
+    await Promise.all([exitWatchersStopPromise, scriptRuntimeStop]);
     if (lifecycleChanged()) {
       return;
+    }
+    if (scriptRuntimeStop && scriptRuntime) {
+      scriptRuntime.current = createScriptRuntime();
+      scriptRuntimeStop = undefined;
     }
     await startCron();
     if (lifecycleChanged()) {

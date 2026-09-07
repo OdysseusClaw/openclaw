@@ -16,7 +16,7 @@ const providerRegistryMocks = vi.hoisted(() => {
   };
   return {
     isPluginProvidersLoadInFlight: vi.fn(rejectProviderDiscovery),
-    resolvePluginProvidersCore: vi.fn(rejectProviderDiscovery),
+    acquirePluginProvidersCore: vi.fn(rejectProviderDiscovery),
   };
 });
 
@@ -36,7 +36,7 @@ beforeAll(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
   providerRegistryMocks.isPluginProvidersLoadInFlight.mockClear();
-  providerRegistryMocks.resolvePluginProvidersCore.mockClear();
+  providerRegistryMocks.acquirePluginProvidersCore.mockClear();
 });
 
 const baseProviderTransform = {
@@ -209,7 +209,7 @@ describe("buildAttemptSystemPrompt", () => {
         mode: testCase.mode,
         sandboxed: testCase.sandboxed,
       });
-      expect(providerRegistryMocks.resolvePluginProvidersCore).not.toHaveBeenCalled();
+      expect(providerRegistryMocks.acquirePluginProvidersCore).not.toHaveBeenCalled();
     },
   );
   it("replaces an intermediate permission prompt after later changes", async () => {

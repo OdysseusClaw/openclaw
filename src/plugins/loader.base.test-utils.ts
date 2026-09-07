@@ -25,7 +25,6 @@ import {
   resolvePluginInteractiveRegistrationsMatch,
 } from "./interactive-registry.js";
 import { resolvePluginRegistryLoadCacheKey } from "./loader-cache.js";
-import { loadOpenClawPlugins, resolveRuntimePluginRegistry } from "./loader.js";
 import {
   EMPTY_PLUGIN_SCHEMA,
   makePluginLoaderTempDir,
@@ -34,6 +33,10 @@ import {
   writePlugin,
   writePluginMetadata,
 } from "./loader.test-fixtures.js";
+import {
+  loadOpenClawPluginsForTest as loadOpenClawPlugins,
+  resolveRuntimePluginRegistryForTest as resolveRuntimePluginRegistry,
+} from "./loader.test-handles.js";
 import {
   cachedBundledTelegramDir,
   channelPluginSource,

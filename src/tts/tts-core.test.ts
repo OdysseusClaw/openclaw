@@ -4,7 +4,7 @@ import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coerci
 import { describe, expect, it, vi } from "vitest";
 import type { AssistantMessage, Model, Usage } from "../llm/types.js";
 import type { SpeechModelOverridePolicy } from "./provider-types.js";
-import { resolveSpeechProviderApiKey, summarizeText } from "./tts-core.js";
+import { resolveSpeechProviderApiKey, summarizeTextCore } from "./tts-core.js";
 import type { ResolvedTtsConfig } from "./tts-types.js";
 
 const modelOverridePolicy: SpeechModelOverridePolicy = {
@@ -93,7 +93,7 @@ describe("TTS core", () => {
         timestamp: Date.now(),
       } satisfies AssistantMessage;
 
-      const result = await summarizeText(
+      const result = await summarizeTextCore(
         {
           text: "Long text that should be summarized for speech.",
           targetLength: 120,
@@ -103,7 +103,7 @@ describe("TTS core", () => {
         },
         {
           completeWithPreparedSimpleCompletionModel: vi.fn(async () => assistant),
-          prepareSimpleCompletionModel: vi.fn(async () => ({ model, auth })),
+          acquireSimpleCompletionModel: vi.fn(async () => ({ model, auth, release: vi.fn() })),
           requireApiKey: vi.fn(() => "key"),
         },
       );

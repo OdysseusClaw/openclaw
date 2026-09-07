@@ -243,6 +243,7 @@ defineDiscordVoiceTests(
           groupPolicy: "open",
           allowFrom: ["discord:u-guest"],
           voice: {
+            mode: "stt-tts",
             model: "openai/gpt-5.4-mini",
           },
         },
@@ -615,7 +616,10 @@ defineDiscordVoiceTests(
         client,
       );
 
-      await receiveVoiceUtterance(manager, "u-owner");
+      expect(await manager.join({ guildId: "g1", channelId: "1001" })).toMatchObject({ ok: true });
+      const entry = getSessionEntry(manager);
+      delete entry.guildName;
+      await receiveRecordedSpeech(manager, undefined, entry, "u-owner");
 
       expect(client.fetchGuild).toHaveBeenCalledWith("g1");
       expect(agentCommandMock).toHaveBeenCalledTimes(1);

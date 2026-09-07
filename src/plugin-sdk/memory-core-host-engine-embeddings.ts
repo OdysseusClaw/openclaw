@@ -66,11 +66,6 @@ export type {
   RemoteEmbeddingClient,
   RemoteEmbeddingProviderId,
 } from "../../packages/memory-host-sdk/src/engine-embeddings.js";
-export {
-  getMemoryEmbeddingProvider,
-  listMemoryEmbeddingProviders,
-  listRegisteredMemoryEmbeddingProviderAdapters,
-} from "../plugins/memory-embedding-provider-runtime.js";
 export { registerRuntimeAuthProfileStoreMutationListener } from "../agents/auth-profiles/runtime-snapshots.js";
 export type {
   MemoryEmbeddingBatchChunk,
@@ -83,3 +78,10 @@ export type {
   MemoryEmbeddingProviderIndexIdentity,
   MemoryEmbeddingProviderRuntime,
 } from "../plugins/memory-embedding-providers.js";
+
+export {
+  acquireMemoryEmbeddingProvider,
+  getMemoryEmbeddingProvider,
+  listMemoryEmbeddingProviders,
+  listRegisteredMemoryEmbeddingProviderAdapters,
+} from "./memory-embedding-registry-runtime.js";

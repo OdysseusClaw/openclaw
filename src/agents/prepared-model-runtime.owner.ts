@@ -3,6 +3,8 @@ import { toStringifiedError } from "@openclaw/normalization-core/error-coercion"
 import { tryResolveLegacyCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
 import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { PluginRegistryResourceScope } from "../plugins/registry-resources.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 import {
   listAgentIds,
@@ -53,8 +55,19 @@ export function resolvePreparedModelRuntimeOwnerBySnapshot(
 function publishPreparedModelRuntimeOwnerSnapshot(
   owner: PreparedModelRuntimeOwner,
   snapshot: PreparedModelRuntimeSnapshot,
+  resources?: PluginRegistryResourceScope,
 ): PreparedModelRuntimeSnapshot {
-  const published = stampPreparedModelRuntimeSnapshotConfig(snapshot, owner.input.config);
+  if (resources && owner.resources !== resources) {
+    const previous = owner.resources;
+    owner.resources = resources;
+    previous?.release();
+  }
+  const config = owner.input.config;
+  let published = snapshot;
+  if (snapshot.config !== config) {
+    published = Object.freeze({ ...snapshot, config });
+    copyPreparedModelRuntimeAuthBindings(snapshot, published);
+  }
   if (owner.snapshot) {
     ownersBySnapshot.delete(owner.snapshot);
   }
@@ -102,11 +115,20 @@ export function retirePreparedModelRuntimeOwnerIfUnused(
     (owner.provenance === "run" || owner.provenance === "ephemeral") &&
     (owner.admissionCount ?? 0) === 0 &&
     (owner.leaseCount ?? 0) === 0 &&
-    !retained &&
-    owners.get(key) === owner
+    !retained
   ) {
-    owners.delete(key);
+    if (owners.get(key) === owner) {
+      owners.delete(key);
+    }
+    releasePreparedModelRuntimeOwnerResources(owner);
   }
+}
+
+/** Unpublication releases its own claim; admitted turns retain their immutable generations. */
+export function releasePreparedModelRuntimeOwnerResources(owner: PreparedModelRuntimeOwner): void {
+  const resources = owner.resources;
+  owner.resources = undefined;
+  resources?.release();
 }
 
 export class PreparedModelRuntimeOwnerRetention {
@@ -133,8 +155,12 @@ export class PreparedModelRuntimeOwnerRetention {
     if (owner.provenance !== "run") {
       return;
     }
+    const previous = this.#retained.get(key);
     this.#retained.delete(key);
     this.#retained.set(key, owner);
+    if (previous && previous !== owner) {
+      retirePreparedModelRuntimeOwnerIfUnused(owners, key, previous);
+    }
     while (this.#retained.size > this.maxSize) {
       const oldest = this.#retained.entries().next().value;
       if (!oldest) {
@@ -250,18 +276,6 @@ export function preparedModelRuntimeConfigsMatch(
   } catch {
     return false;
   }
-}
-
-function stampPreparedModelRuntimeSnapshotConfig(
-  snapshot: PreparedModelRuntimeSnapshot,
-  config: OpenClawConfig,
-): PreparedModelRuntimeSnapshot {
-  if (snapshot.config === config) {
-    return snapshot;
-  }
-  const stamped = Object.freeze({ ...snapshot, config });
-  copyPreparedModelRuntimeAuthBindings(snapshot, stamped);
-  return stamped;
 }
 
 export function advancePreparedModelRuntimeOwnerConfig(
@@ -405,12 +419,7 @@ export function hasSameLifecycleInput(
 }
 
 export function createPreparedModelRuntimeReplacement(): PreparedModelRuntimeReplacement {
-  let resolve!: () => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
+  const { promise, resolve, reject } = createDeferredCore();
   // Readers await the original promise. This handler only prevents an unobserved rejected gate
   // when a reload fails before any request reaches the stale generation.
   void promise.catch(() => undefined);
@@ -577,7 +586,11 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
               if (params.registerEntriesAfterBuildStart === true) {
                 // First-build hooks may emit auth mutations. Publish the owner only after those
                 // hooks start so an event cannot refresh a generation that was not visible yet.
+                const previous = params.owners.get(candidate.key);
                 params.owners.set(candidate.key, candidate.owner);
+                if (previous && previous !== candidate.owner) {
+                  releasePreparedModelRuntimeOwnerResources(previous);
+                }
                 candidate.markRegistered();
               }
               candidate.owner.buildCompletion = build.completion;
@@ -620,8 +633,12 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
             `prepared model runtime snapshot missing after auth refresh for ${candidate.input.agentDir}`,
           );
         }
-        const snapshot = publishPreparedModelRuntimeOwnerSnapshot(candidate.owner, result.snapshot);
-        results.set(candidate.owner, { ...result, snapshot });
+        publishPreparedModelRuntimeOwnerSnapshot(
+          candidate.owner,
+          result.snapshot,
+          result.resources,
+        );
+        results.delete(candidate.owner);
         candidate.owner.pluginGeneration = result.pluginGeneration;
         candidate.owner.needsRefresh = false;
       }
@@ -638,6 +655,10 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
         candidate.owner.refreshError = refreshError;
       }
       throw refreshError;
+    } finally {
+      for (const result of results.values()) {
+        result.resources.release();
+      }
     }
   })();
   await publication;
@@ -687,20 +708,30 @@ export async function publishModelRuntimeSnapshot(
       owner.buildCompletion = undefined;
     }
   });
+  const previous = owners.get(key);
   owners.set(key, owner);
+  if (previous && previous !== owner) {
+    releasePreparedModelRuntimeOwnerResources(previous);
+  }
+  let result: PreparedModelRuntimeBuildResult | undefined;
   const publication = (async () => {
     try {
-      const result = (await build.pending)[0]!;
+      result = (await build.pending)[0]!;
       if (!isGenerationCurrent()) {
         throw new PreparedModelRuntimePublicationSupersededError(
           `prepared model runtime publication was superseded for ${input.agentDir}`,
         );
       }
-      const snapshot = publishPreparedModelRuntimeOwnerSnapshot(owner, result.snapshot);
+      const snapshot = publishPreparedModelRuntimeOwnerSnapshot(
+        owner,
+        result.snapshot,
+        result.resources,
+      );
       owner.pluginGeneration = result.pluginGeneration;
       owner.pendingPluginGeneration = undefined;
       owner.pending = undefined;
       owner.needsRefresh = false;
+      result = undefined;
       return snapshot;
     } catch (error) {
       const refreshError = toStringifiedError(error);
@@ -716,6 +747,8 @@ export async function publishModelRuntimeSnapshot(
         }
       }
       throw refreshError;
+    } finally {
+      result?.resources.release();
     }
   })();
   // Every waiter observes the publication guard, not the underlying discovery result. This keeps

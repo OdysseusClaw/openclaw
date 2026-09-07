@@ -8,7 +8,6 @@ import {
   defineBundledChannelEntry,
   type OpenClawPluginApi,
 } from "../plugin-sdk/channel-entry-contract.js";
-import { loadOpenClawPluginCliRegistry, loadOpenClawPlugins } from "./loader.js";
 import {
   cleanupPluginLoaderFixturesForTest,
   EMPTY_PLUGIN_SCHEMA,
@@ -19,6 +18,10 @@ import {
   writePlugin,
   writePluginMetadata,
 } from "./loader.test-fixtures.js";
+import {
+  loadOpenClawPluginCliRegistryForTest as loadOpenClawPluginCliRegistry,
+  loadOpenClawPluginsForTest as loadOpenClawPlugins,
+} from "./loader.test-handles.js";
 
 afterEach(() => {
   resetPluginLoaderTestStateForTest();

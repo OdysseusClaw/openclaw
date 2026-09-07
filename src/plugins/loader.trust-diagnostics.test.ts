@@ -6,7 +6,6 @@ import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { resetPluginStateStoreForTests } from "../plugin-state/plugin-state-store.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { writePersistedInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-records.js";
-import { loadOpenClawPlugins } from "./loader.js";
 import {
   cleanupPluginLoaderFixturesForTest,
   makePluginLoaderTempDir,
@@ -15,6 +14,7 @@ import {
   writePlugin,
   writePluginMetadata,
 } from "./loader.test-fixtures.js";
+import { loadOpenClawPluginsForTest as loadOpenClawPlugins } from "./loader.test-handles.js";
 import { buildPluginInspectReport, buildPluginSnapshotReport } from "./status.js";
 
 const pluginId = "diagnostics-otel";

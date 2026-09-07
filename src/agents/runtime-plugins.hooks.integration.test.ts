@@ -9,6 +9,7 @@ import {
   useNoBundledPlugins,
   writePlugin,
 } from "../plugins/loader.test-fixtures.js";
+import { retainPluginRegistryHandleForTest } from "../plugins/loader.test-handles.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
 import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
@@ -63,7 +64,11 @@ it.each([
     expect(result?.prependContext).toBe(scope === "configured" ? "hook-injected" : undefined);
   };
   if (scope === "empty base") {
-    await run(loadAgentRuntimePluginRegistryHandle({ config, workspaceDir, basePluginIds: [] }));
+    await run(
+      retainPluginRegistryHandleForTest(
+        loadAgentRuntimePluginRegistryHandle({ config, workspaceDir, basePluginIds: [] }),
+      ),
+    );
   } else if (scope === "empty request") {
     await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
       withAgentPluginRegistry({ config, workspaceDir, run }),

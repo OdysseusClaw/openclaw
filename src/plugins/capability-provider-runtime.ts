@@ -23,6 +23,11 @@ import {
 } from "./manifest-contract-eligibility.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 import { normalizeCapabilityProviderId } from "./provider-registry-shared.js";
+import {
+  PluginRegistryResourceScope,
+  createPluginRegistryResourceLease,
+  requirePluginRegistryResourceScope,
+} from "./registry-resources.js";
 import type { PluginRegistry } from "./registry-types.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
 import {
@@ -417,6 +422,7 @@ function loadCapabilityProviderEntries<K extends CapabilityProviderRegistryKey>(
   bundledCompatPluginIds: string[];
   loadOptions: PluginLoadOptions;
   requested?: Set<string>;
+  resourceScope: PluginRegistryResourceScope;
 }): PluginRegistry[K] {
   const allowedPluginIds = new Set(params.loadOptions.onlyPluginIds);
   const filterAllowedEntries = (registry: PluginRegistry | undefined): PluginRegistry[K] =>
@@ -437,19 +443,24 @@ function loadCapabilityProviderEntries<K extends CapabilityProviderRegistryKey>(
   const catalogFamily = shouldScopeCapabilityLoadToRequestedProviders(params.key)
     ? params.key
     : undefined;
+  if (loadedRegistry) {
+    params.resourceScope.retain(loadedRegistry);
+  }
+  const loadedHandle = loadedRegistry
+    ? undefined
+    : resolveRuntimePluginRegistry({
+        ...params.loadOptions,
+        ...(catalogFamily
+          ? {
+              capabilityCatalog: {
+                family: catalogFamily,
+                context: resolvePluginCapabilityCatalogContext(),
+              },
+            }
+          : {}),
+      });
   const registry =
-    loadedRegistry ??
-    resolveRuntimePluginRegistry({
-      ...params.loadOptions,
-      ...(catalogFamily
-        ? {
-            capabilityCatalog: {
-              family: catalogFamily,
-              context: resolvePluginCapabilityCatalogContext(),
-            },
-          }
-        : {}),
-    });
+    loadedRegistry ?? (loadedHandle ? params.resourceScope.adopt(loadedHandle) : undefined);
   const entries = filterAllowedEntries(registry);
   const missingRequested =
     params.requested && params.requested.size > 0 ? new Set(params.requested) : undefined;
@@ -472,10 +483,12 @@ function loadCapabilityProviderEntries<K extends CapabilityProviderRegistryKey>(
     return entries;
   }
   const captured = filterAllowedEntries(
-    loadBundledCapabilityRuntimeRegistry({
-      ...params.loadOptions,
-      pluginIds: bundledCompatPluginIds,
-    }),
+    params.resourceScope.adopt(
+      loadBundledCapabilityRuntimeRegistry({
+        ...params.loadOptions,
+        pluginIds: bundledCompatPluginIds,
+      }),
+    ),
   );
   return entries.length > 0 ? mergeCapabilityProviderEntries(entries, captured) : captured;
 }
@@ -484,13 +497,19 @@ export function resolvePluginCapabilityProvider<K extends CapabilityProviderRegi
   key: K;
   providerId: string;
   cfg?: OpenClawConfig;
+  resourceScope?: PluginRegistryResourceScope;
 }): CapabilityProviderFor<K> | undefined {
   if (shouldSkipCapabilityResolution(params)) {
     return undefined;
   }
 
+  const resourceScope = params.resourceScope ?? requirePluginRegistryResourceScope();
+  resourceScope.assertRetained();
   const activeRegistry =
     getPluginRuntimeGatewayRequestScope()?.pluginRegistry ?? getLoadedRuntimePluginRegistry();
+  if (activeRegistry) {
+    resourceScope.retain(activeRegistry);
+  }
   const activeProviders = filterPolicyAllowedCapabilityProviders({
     entries: activeRegistry?.[params.key] ?? [],
     registry: activeRegistry,
@@ -537,6 +556,7 @@ export function resolvePluginCapabilityProvider<K extends CapabilityProviderRegi
     bundledCompatPluginIds: pluginIds.bundledCompatPluginIds,
     loadOptions,
     requested: new Set([params.providerId.toLowerCase()]),
+    resourceScope,
   });
   return findProviderById(loadedProviders, params.providerId);
 }
@@ -545,13 +565,19 @@ export function resolvePluginCapabilityProviders<K extends CapabilityProviderReg
   key: K;
   cfg?: OpenClawConfig;
   additionalProviderIds?: readonly string[];
+  resourceScope?: PluginRegistryResourceScope;
 }): CapabilityProviderFor<K>[] {
   if (shouldSkipCapabilityResolution(params)) {
     return [];
   }
 
+  const resourceScope = params.resourceScope ?? requirePluginRegistryResourceScope();
+  resourceScope.assertRetained();
   const activeRegistry =
     getPluginRuntimeGatewayRequestScope()?.pluginRegistry ?? getLoadedRuntimePluginRegistry();
+  if (activeRegistry) {
+    resourceScope.retain(activeRegistry);
+  }
   const activeProviders = filterPolicyAllowedCapabilityProviders({
     entries: activeRegistry?.[params.key] ?? [],
     registry: activeRegistry,
@@ -617,6 +643,7 @@ export function resolvePluginCapabilityProviders<K extends CapabilityProviderReg
     bundledCompatPluginIds: pluginIds.bundledCompatPluginIds,
     loadOptions,
     requested: requestedProviderFilter,
+    resourceScope,
   });
   const loadedProviderFilter =
     activeProviders.length > 0 ? requestedProviders : requestedProviderFilter;
@@ -684,4 +711,32 @@ export function prepareMediaCapabilityProviders(params: {
     videoGenerationProviders: providers("videoGenerationProviders"),
     musicGenerationProviders: providers("musicGenerationProviders"),
   });
+}
+
+/** Acquires executable capability callbacks for an explicitly released caller lifetime. */
+export function acquirePluginCapabilityProvider<K extends CapabilityProviderRegistryKey>(
+  params: Omit<Parameters<typeof resolvePluginCapabilityProvider<K>>[0], "resourceScope">,
+) {
+  const resourceScope = new PluginRegistryResourceScope();
+  try {
+    const provider = resolvePluginCapabilityProvider({ ...params, resourceScope });
+    return { provider, ...createPluginRegistryResourceLease(resourceScope) };
+  } catch (error) {
+    resourceScope.release();
+    throw error;
+  }
+}
+
+/** Acquires a capability inventory whose callbacks remain valid until release. */
+export function acquirePluginCapabilityProviders<K extends CapabilityProviderRegistryKey>(
+  params: Omit<Parameters<typeof resolvePluginCapabilityProviders<K>>[0], "resourceScope">,
+) {
+  const resourceScope = new PluginRegistryResourceScope();
+  try {
+    const providers = resolvePluginCapabilityProviders({ ...params, resourceScope });
+    return { providers, ...createPluginRegistryResourceLease(resourceScope) };
+  } catch (error) {
+    resourceScope.release();
+    throw error;
+  }
 }

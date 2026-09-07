@@ -33,19 +33,19 @@ import {
   resolveNativePluginModelConfig,
 } from "./loader-runtime-load.js";
 import {
-  clearPluginRegistryLoadCache,
-  loadAndActivateRootPluginRegistry,
-  loadOpenClawPluginCliRegistry,
-  loadOpenClawPlugins,
-  loadPluginRegistryHandle,
-  resolveRuntimePluginRegistry,
-} from "./loader.js";
-import {
   makePluginLoaderTempDir,
   resetPluginLoaderTestStateForTest,
   useNoBundledPlugins,
   writePlugin,
 } from "./loader.test-fixtures.js";
+import {
+  clearPluginRegistryLoadCache,
+  loadAndActivateRootPluginRegistry,
+  loadOpenClawPluginCliRegistryForTest as loadOpenClawPluginCliRegistry,
+  loadOpenClawPluginsForTest as loadOpenClawPlugins,
+  loadPluginRegistryHandleForTest as loadPluginRegistryHandle,
+  resolveRuntimePluginRegistryForTest as resolveRuntimePluginRegistry,
+} from "./loader.test-handles.js";
 import { buildMemoryPromptSection, registerMemoryCapability } from "./memory-state.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import { getPluginModuleLoaderStats } from "./plugin-module-loader-cache.js";

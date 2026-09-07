@@ -1,6 +1,19 @@
+import { DatabaseSync } from "node:sqlite";
+import { setImmediate } from "node:timers/promises";
 // Verifies tool-result middleware validation, sanitization, and fail-closed behavior.
 import { describe, expect, it } from "vitest";
-import { createAgentToolResultMiddlewareRunner } from "./tool-result-middleware.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  createPluginRegistryResourceOwner,
+  drainPluginRegistryResourceDisposals,
+  registerPluginRegistryResourceDisposer,
+  requirePluginRegistryResourceScope,
+} from "../../plugins/registry-resources.js";
+import { createDeferredCore } from "../../shared/deferred.js";
+import {
+  acquireAgentToolResultMiddlewareRunner,
+  createAgentToolResultMiddlewareRunner,
+} from "./tool-result-middleware.js";
 
 describe("createAgentToolResultMiddlewareRunner", () => {
   it("fails closed when middleware throws", async () => {
@@ -655,5 +668,66 @@ describe("createAgentToolResultMiddlewareRunner", () => {
 
     expect(result.content).toEqual([{ type: "text", text: "compacted" }]);
     expect(result.details).toEqual({ compacted: true, runtime: "codex" });
+  });
+});
+
+describe("acquired middleware lifetime", () => {
+  it("joins admitted middleware and rejects new calls after release", async () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE proof (value INTEGER)");
+    const started = createDeferredCore();
+    const finish = createDeferredCore();
+    const disposalStarted = createDeferredCore();
+    const finishDisposal = createDeferredCore();
+    const runner = acquireAgentToolResultMiddlewareRunner({ runtime: "openclaw" }, [
+      async () => {
+        const registry = createEmptyPluginRegistry();
+        requirePluginRegistryResourceScope().adopt({
+          registry,
+          ...createPluginRegistryResourceOwner(registry, "scoped"),
+        });
+        registerPluginRegistryResourceDisposer(registry, "fixture", {
+          id: "database",
+          async dispose() {
+            disposalStarted.resolve();
+            await finishDisposal.promise;
+            db.close();
+          },
+        });
+        started.resolve();
+        await finish.promise;
+        db.prepare("INSERT INTO proof VALUES (?)").run(1);
+        return { result: { content: [{ type: "text", text: "written" }], details: {} } };
+      },
+    ]);
+    const event = {
+      toolName: "write",
+      toolCallId: "call",
+      args: {},
+      result: { content: [{ type: "text" as const, text: "input" }], details: {} },
+    };
+    const operation = runner.applyToolResultMiddleware(event);
+    await started.promise;
+    let released = false;
+    const release = runner.release().then(() => {
+      released = true;
+    });
+    try {
+      await expect(runner.applyToolResultMiddleware(event)).rejects.toThrow("released");
+      expect(released).toBe(false);
+      expect(db.isOpen).toBe(true);
+      finish.resolve();
+      await disposalStarted.promise;
+      await setImmediate();
+      expect(released).toBe(false);
+      expect(db.isOpen).toBe(true);
+    } finally {
+      finish.resolve();
+      finishDisposal.resolve();
+      await release;
+    }
+    await expect(operation).resolves.toMatchObject({ content: [{ text: "written" }] });
+    await drainPluginRegistryResourceDisposals();
+    expect(db.isOpen).toBe(false);
   });
 });

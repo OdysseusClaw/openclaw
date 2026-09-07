@@ -25,6 +25,7 @@ import {
 import {
   preparedPluginGenerationReusesBase,
   preparedPluginGenerationSupportsSelections,
+  retainPreparedPluginGenerationResources,
 } from "./prepared-model-runtime.plugin-generation.js";
 import type { PreparedModelRuntimeLeaseOptions } from "./prepared-model-runtime.types.js";
 
@@ -210,10 +211,11 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
           // A turn may finish under its still-open parent lease after reload. Its historic
           // generation must never publish over the configured owner for newly admitted work.
           throwIfLeaseAdmissionAborted(options.abortSignal);
+          const resources = retainPreparedPluginGenerationResources(options.pluginGeneration);
           return {
             snapshot: borrowed,
             pluginGeneration: options.pluginGeneration,
-            release: () => {},
+            release: () => resources.release(),
           };
         }
         throw new PreparedModelRuntimeOwnerNotPublishedError(
@@ -307,8 +309,9 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
   try {
     throwIfLeaseAdmissionAborted(options.abortSignal);
     const pluginGeneration = owner.pluginGeneration!;
+    const resources = retainPreparedPluginGenerationResources(pluginGeneration);
     if (owner.provenance !== provenance) {
-      return { snapshot, pluginGeneration, release: () => {} };
+      return { snapshot, pluginGeneration, release: () => resources.release() };
     }
     throwIfLeaseAdmissionAborted(options.abortSignal);
     if (provenance === "run" && options.retainIdleRunOwner) {
@@ -327,6 +330,7 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
           return;
         }
         released = true;
+        resources.release();
         owner.leaseCount = Math.max(0, (owner.leaseCount ?? 1) - 1);
         // Direct runs retain one idle generation; gateways retain a bounded LRU so repeated selections
         // reuse workspace facts. Identity checks keep old releases from deleting replacements.

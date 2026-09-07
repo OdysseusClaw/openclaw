@@ -1,6 +1,11 @@
 // Shared STT plus agent-consult meeting engine.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import {
+  PluginRegistryResourceScope,
+  createPluginRegistryResourceLease,
+  getPluginRegistryResourceScope,
+} from "../plugins/registry-resources.js";
 import type { PluginRuntime, RuntimeLogger } from "../plugins/runtime/types.js";
 import type { RealtimeTranscriptionProviderPlugin } from "../plugins/types.js";
 import type { RealtimeTranscriptionSession } from "../realtime-transcription/provider-types.js";
@@ -42,8 +47,40 @@ export async function startMeetingAgentRealtimeEngine(params: {
   providers?: RealtimeTranscriptionProviderPlugin[];
   consultAgent: (params: MeetingAgentConsultParams) => Promise<{ text: string }>;
 }): Promise<MeetingRealtimeAudioEngineHandle> {
+  const resources = createPluginRegistryResourceLease(
+    getPluginRegistryResourceScope()?.fork() ?? new PluginRegistryResourceScope(),
+  );
+  try {
+    return await resources.run(() =>
+      startMeetingAgentRealtimeEngineWithResources(params, resources),
+    );
+  } catch (error) {
+    resources.release();
+    throw error;
+  }
+}
+
+async function startMeetingAgentRealtimeEngineWithResources(
+  params: {
+    config: MeetingRealtimeEngineConfig;
+    fullConfig: OpenClawConfig;
+    runtime: PluginRuntime;
+    platform: MeetingRuntimePlatform;
+    meetingSessionId: string;
+    requesterSessionKey?: string;
+    logPrefix?: "node";
+    transport: MeetingRealtimeAudioTransport;
+    logger: RuntimeLogger;
+    providers?: RealtimeTranscriptionProviderPlugin[];
+    consultAgent: (params: MeetingAgentConsultParams) => Promise<{ text: string }>;
+  },
+  resources: ReturnType<typeof createPluginRegistryResourceLease>,
+): Promise<MeetingRealtimeAudioEngineHandle> {
   let stopped = false;
   let stopPromise: Promise<void> | undefined;
+  let sessionClosed = false;
+  let transportStopped = false;
+  let transportDisposed = false;
   let sttSession: RealtimeTranscriptionSession | null = null;
   let realtimeReady = false;
   let ttsQueue = Promise.resolve();
@@ -63,32 +100,66 @@ export async function startMeetingAgentRealtimeEngine(params: {
   );
 
   const stop = async () => {
-    if (stopped) {
+    stopped = true;
+    if (stopPromise) {
       await stopPromise;
       return;
     }
-    stopped = true;
-    stopPromise = (async () => {
-      harness.close();
-      try {
-        sttSession?.close();
-      } catch (error) {
-        params.logger.debug?.(
-          `${params.platform.logScope} ${agentLogScope} transcription bridge close ignored: ${formatErrorMessage(error)}`,
-        );
+    if (sessionClosed && transportStopped && transportDisposed) {
+      return;
+    }
+    const cleanup = resources.run(() =>
+      Promise.resolve().then(async () => {
+        let cleanupError: unknown;
+        if (!sessionClosed) {
+          harness.close();
+          try {
+            sttSession?.close();
+            sessionClosed = true;
+          } catch (error) {
+            cleanupError = error;
+          }
+          if (sessionClosed) {
+            harness.emit({
+              type: "session.closed",
+              final: true,
+              payload: { meetingSessionId: params.meetingSessionId },
+            });
+          }
+        }
+        if (!transportStopped) {
+          try {
+            await params.transport.stop();
+            transportStopped = true;
+          } catch (error) {
+            cleanupError ??= error;
+          }
+        }
+        if (!transportDisposed) {
+          try {
+            await params.transport.dispose();
+            transportDisposed = true;
+          } catch (error) {
+            cleanupError ??= error;
+          }
+        }
+        // Failed provider closure keeps the same retry owner even after transport cleanup succeeds.
+        if (!sessionClosed || !transportStopped || !transportDisposed) {
+          throw cleanupError instanceof Error
+            ? cleanupError
+            : new Error("Meeting agent cleanup failed", { cause: cleanupError });
+        }
+      }),
+    );
+    stopPromise = cleanup;
+    try {
+      await cleanup;
+      resources.release();
+    } finally {
+      if (stopPromise === cleanup) {
+        stopPromise = undefined;
       }
-      harness.emit({
-        type: "session.closed",
-        final: true,
-        payload: { meetingSessionId: params.meetingSessionId },
-      });
-      try {
-        await params.transport.stop();
-      } finally {
-        await params.transport.dispose();
-      }
-    })();
-    await stopPromise;
+    }
   };
 
   const stopAfterFailure = (source: string) => {
@@ -292,8 +363,10 @@ export async function startMeetingAgentRealtimeEngine(params: {
       if (!harness.recordInputAudio(audio)) {
         return;
       }
-      sttSession?.sendAudio(
-        convertMeetingBridgeAudioForStt(audio, params.config.chrome.audioFormat),
+      resources.run(() =>
+        sttSession?.sendAudio(
+          convertMeetingBridgeAudioForStt(audio, params.config.chrome.audioFormat),
+        ),
       );
     });
 
@@ -324,7 +397,8 @@ export async function startMeetingAgentRealtimeEngine(params: {
     speak: enqueueSpeakText,
     getHealth: () => ({
       ...harness.getHealth({
-        providerConnected: sttSession?.isConnected() ?? false,
+        providerConnected:
+          !sessionClosed && resources.run(() => sttSession?.isConnected() ?? false),
         realtimeReady,
       }),
       ...params.transport.getHealth?.(),

@@ -6,14 +6,15 @@ import {
   validateTtsSpeakParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/types.js";
+import { withPluginRegistryResourceOperationAsync } from "../../plugins/registry-resources.js";
 import {
   assertSecretOwnerAvailable,
   SecretSurfaceUnavailableError,
 } from "../../secrets/runtime-degraded-state.js";
 import {
   canonicalizeSpeechProviderId,
-  getSpeechProvider,
-  listSpeechProviders,
+  getSpeechProviderCore,
+  listSpeechProvidersCore,
 } from "../../tts/provider-registry.js";
 import { resolvePreparedTtsProvider } from "../../tts/tts-provider-resolution.js";
 import { resolveTtsSettingsSnapshot } from "../../tts/tts-settings.js";
@@ -44,7 +45,7 @@ function yieldBeforeTtsStatusSetup(): Promise<void> {
 
 function resolveTtsGatewayStatusFacts(cfg: OpenClawConfig) {
   const settings = resolveTtsSettingsSnapshot({ cfg });
-  const speechProviders = listSpeechProviders(cfg);
+  const speechProviders = listSpeechProvidersCore(cfg);
   const configuredByProvider = new Map(
     speechProviders.map(
       (provider) => [provider.id, isTtsProviderConfigured(settings.config, provider, cfg)] as const,
@@ -62,45 +63,47 @@ function resolveTtsGatewayStatusFacts(cfg: OpenClawConfig) {
 /** Gateway request handlers for TTS status, preference mutation, and synthesis. */
 export const ttsHandlers: GatewayRequestHandlers = {
   "tts.status": async ({ respond, context }) => {
-    try {
-      await yieldBeforeTtsStatusSetup();
-      const cfg = context.getRuntimeConfig();
-      const { configuredByProvider, provider, settings, speechProviders } =
-        resolveTtsGatewayStatusFacts(cfg);
-      const fallbackProviders = resolveTtsProviderOrder(provider, cfg, speechProviders)
-        .slice(1)
-        .filter((candidate) => {
-          if (configuredByProvider.has(candidate)) {
-            return configuredByProvider.get(candidate) === true;
-          }
-          return isTtsProviderConfigured(settings.config, candidate, cfg);
+    return withPluginRegistryResourceOperationAsync(async () => {
+      try {
+        await yieldBeforeTtsStatusSetup();
+        const cfg = context.getRuntimeConfig();
+        const { configuredByProvider, provider, settings, speechProviders } =
+          resolveTtsGatewayStatusFacts(cfg);
+        const fallbackProviders = resolveTtsProviderOrder(provider, cfg, speechProviders)
+          .slice(1)
+          .filter((candidate) => {
+            if (configuredByProvider.has(candidate)) {
+              return configuredByProvider.get(candidate) === true;
+            }
+            return isTtsProviderConfigured(settings.config, candidate, cfg);
+          });
+        // Report configured state per provider so the UI can explain why fallback
+        // order differs from the complete provider registry.
+        const providerStates = speechProviders.map((candidate) => ({
+          id: candidate.id,
+          label: candidate.label,
+          configured: configuredByProvider.get(candidate.id) === true,
+        }));
+        respond(true, {
+          enabled: settings.autoMode !== "off",
+          auto: settings.autoMode,
+          provider,
+          persona: settings.persona?.id ?? null,
+          personas: listTtsPersonas(settings.config).map((entry) => ({
+            id: entry.id,
+            label: entry.label,
+            description: entry.description,
+            provider: entry.provider,
+          })),
+          fallbackProvider: fallbackProviders[0] ?? null,
+          fallbackProviders,
+          prefsPath: settings.prefsPath,
+          providerStates,
         });
-      // Report configured state per provider so the UI can explain why fallback
-      // order differs from the complete provider registry.
-      const providerStates = speechProviders.map((candidate) => ({
-        id: candidate.id,
-        label: candidate.label,
-        configured: configuredByProvider.get(candidate.id) === true,
-      }));
-      respond(true, {
-        enabled: settings.autoMode !== "off",
-        auto: settings.autoMode,
-        provider,
-        persona: settings.persona?.id ?? null,
-        personas: listTtsPersonas(settings.config).map((entry) => ({
-          id: entry.id,
-          label: entry.label,
-          description: entry.description,
-          provider: entry.provider,
-        })),
-        fallbackProvider: fallbackProviders[0] ?? null,
-        fallbackProviders,
-        prefsPath: settings.prefsPath,
-        providerStates,
-      });
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+      } catch (err) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+      }
+    });
   },
   "tts.enable": async ({ respond, context }) => {
     try {
@@ -245,30 +248,32 @@ export const ttsHandlers: GatewayRequestHandlers = {
     }
   },
   "tts.setProvider": async ({ params, respond, context }) => {
-    const cfg = context.getRuntimeConfig();
-    const provider = canonicalizeSpeechProviderId(
-      normalizeOptionalString(params.provider) ?? "",
-      cfg,
-    );
-    if (!provider || !getSpeechProvider(provider, cfg)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          "Invalid provider. Use a registered TTS provider id.",
-        ),
+    return withPluginRegistryResourceOperationAsync(async () => {
+      const cfg = context.getRuntimeConfig();
+      const provider = canonicalizeSpeechProviderId(
+        normalizeOptionalString(params.provider) ?? "",
+        cfg,
       );
-      return;
-    }
-    try {
-      const config = resolveTtsConfig(cfg);
-      const prefsPath = resolveTtsPrefsPath(config);
-      setTtsProvider(prefsPath, provider);
-      respond(true, { provider });
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+      if (!provider || !getSpeechProviderCore(provider, cfg)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "Invalid provider. Use a registered TTS provider id.",
+          ),
+        );
+        return;
+      }
+      try {
+        const config = resolveTtsConfig(cfg);
+        const prefsPath = resolveTtsPrefsPath(config);
+        setTtsProvider(prefsPath, provider);
+        respond(true, { provider });
+      } catch (err) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+      }
+    });
   },
   "tts.personas": async ({ respond, context }) => {
     try {
@@ -325,21 +330,24 @@ export const ttsHandlers: GatewayRequestHandlers = {
     }
   },
   "tts.providers": async ({ respond, context }) => {
-    try {
-      const cfg = context.getRuntimeConfig();
-      const { configuredByProvider, provider, speechProviders } = resolveTtsGatewayStatusFacts(cfg);
-      respond(true, {
-        providers: speechProviders.map((candidate) => ({
-          id: candidate.id,
-          name: candidate.label,
-          configured: configuredByProvider.get(candidate.id) === true,
-          models: [...(candidate.models ?? [])],
-          voices: [...(candidate.voices ?? [])],
-        })),
-        active: provider,
-      });
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+    return withPluginRegistryResourceOperationAsync(async () => {
+      try {
+        const cfg = context.getRuntimeConfig();
+        const { configuredByProvider, provider, speechProviders } =
+          resolveTtsGatewayStatusFacts(cfg);
+        respond(true, {
+          providers: speechProviders.map((candidate) => ({
+            id: candidate.id,
+            name: candidate.label,
+            configured: configuredByProvider.get(candidate.id) === true,
+            models: [...(candidate.models ?? [])],
+            voices: [...(candidate.voices ?? [])],
+          })),
+          active: provider,
+        });
+      } catch (err) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+      }
+    });
   },
 };

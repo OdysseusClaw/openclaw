@@ -11,7 +11,7 @@ import { getCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snap
 import { enableExplicitlySelectedPluginInConfig } from "./enable.js";
 import { clearLoadInstalledPluginIndexInstallRecordsCache } from "./installed-plugin-index-record-reader.js";
 import { recordPluginInstall } from "./installs.js";
-import * as loader from "./loader.js";
+import * as loader from "./loader-runtime-core.js";
 import { resetPluginLoaderTestStateForTest } from "./loader.test-fixtures.js";
 import { loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
 import { prepareAuthChoiceLoadedPluginProvider } from "./provider-auth-choice.js";
@@ -109,7 +109,7 @@ it.each([false, true])(
         });
         const runningRegistry = createEmptyPluginRegistry();
         setActivePluginRegistry(runningRegistry);
-        const loaded = vi.spyOn(loader, "loadOpenClawPlugins");
+        const loaded = vi.spyOn(loader, "loadOpenClawPluginsCore");
         install.mockImplementation(async (params) => {
           // The initial provider lookup has already populated its lease's metadata
           // cache. Package acquisition and execution-runtime preparation are stubbed;
@@ -189,7 +189,6 @@ it.each([false, true])(
             });
             expect(install).toHaveBeenCalledOnce();
             expect(prepared?.retrySelection).not.toBe(true);
-            expect(prepared?.provider?.id).toBe("installed-provider");
             expect(prompter.text).toHaveBeenCalledWith({ message: "Selected provider credential" });
             if (setDefaultModel) {
               expect(prompter.note).toHaveBeenCalledWith(

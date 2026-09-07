@@ -222,7 +222,7 @@ export function installEmbeddedRunnerFastRunE2eMocks(
       options.runEmbeddedAttempt(params),
   }));
   vi.doMock("../runtime-plan/build.js", () => ({
-    buildAgentRuntimePlan: vi.fn(
+    buildAgentRuntimePlanCore: vi.fn(
       (params: {
         provider: string;
         modelId: string;

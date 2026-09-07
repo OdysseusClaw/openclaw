@@ -1,10 +1,14 @@
 // Covers lazy outbound channel bootstrap, retry guards, auto-enable config, and
 // send-capable active registry short-circuiting.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js";
 import { migratePersistedImplicitMainRoster } from "../../config/legacy.roster.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  PluginRegistryResourceScope,
+  retainPluginRegistryResources,
+} from "../../plugins/registry-resources.js";
 import {
   getActivePluginRegistry,
   resetPluginRuntimeStateForTest,
@@ -27,11 +31,20 @@ vi.mock("../../plugins/channel-plugin-ids.js", () => ({
 }));
 
 vi.mock("../../plugins/loader.js", () => ({
-  loadPluginRegistryHandle: loaderMocks.loadPluginRegistryHandle,
+  loadPluginRegistryHandle: (...args: unknown[]) => {
+    const registry = loaderMocks.loadPluginRegistryHandle(...args);
+    return { registry, ...retainPluginRegistryResources(registry) };
+  },
 }));
 
-const { bootstrapOutboundChannelPlugin, resetOutboundChannelBootstrapStateForTests } =
-  await import("./channel-bootstrap.runtime.js");
+const {
+  bootstrapOutboundChannelPlugin: bootstrapOutboundChannelPluginImpl,
+  resetOutboundChannelBootstrapStateForTests,
+} = await import("./channel-bootstrap.runtime.js");
+let testResources: PluginRegistryResourceScope;
+const bootstrapOutboundChannelPlugin = (
+  params: Parameters<typeof bootstrapOutboundChannelPluginImpl>[0],
+) => testResources.run(() => bootstrapOutboundChannelPluginImpl(params));
 const {
   createChannelHandler,
   resolveChannelOutboundDirectiveOptions,
@@ -92,7 +105,13 @@ function installDiscordSetupShell(): void {
 }
 
 describe("bootstrapOutboundChannelPlugin", () => {
-  afterEach(() => {
+  beforeEach(() => {
+    testResources = new PluginRegistryResourceScope();
+    loaderMocks.loadPluginRegistryHandle.mockReturnValue(createEmptyPluginRegistry());
+  });
+  afterEach(async () => {
+    testResources.release();
+    await testResources.waitForDisposals();
     loaderMocks.loadPluginRegistryHandle.mockReset();
     loaderMocks.resolveDiscoverableScopedChannelPluginIds.mockClear();
     resetOutboundChannelBootstrapStateForTests();

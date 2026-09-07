@@ -17,13 +17,17 @@ import type { PluginCapabilityCatalogContext } from "./capability-catalog-contex
 import { isPluginRegistryLoadInFlight, resolvePluginRegistryLoadCacheKey } from "./loader-cache.js";
 import { createLazyPluginRuntime } from "./loader-module-runtime.js";
 import { loadOpenClawPluginsWithInternalOverrides } from "./loader-runtime-load.js";
-import { loadOpenClawPlugins, type PluginLoadOptions } from "./loader.js";
+import type { PluginLoadOptions } from "./loader.js";
 import {
   cleanupPluginLoaderFixturesForTest,
   makePluginLoaderTempDir,
   resetPluginLoaderTestStateForTest,
   writePlugin,
 } from "./loader.test-fixtures.js";
+import {
+  loadOpenClawPluginsForTest as loadOpenClawPlugins,
+  retainPluginRegistryHandleForTest,
+} from "./loader.test-handles.js";
 import { createPluginCache, getPluginCache, withPluginCache } from "./plugin-cache.js";
 import { pluginLoaderCacheState } from "./registry-lifecycle.js";
 import { getPluginRegistryRuntime } from "./registry-runtime-binding.js";
@@ -116,22 +120,24 @@ async function withFactoryPlugin(
 }
 
 function loadRestricted(options: PluginLoadOptions) {
-  return loadOpenClawPluginsWithInternalOverrides(
-    { ...options, cache: false },
-    {
-      runtime: {
-        config: {
-          current: () => options.config ?? {},
-          mutateConfigFile: async () => {
-            throw new Error("restricted registration cannot mutate config");
-          },
-          replaceConfigFile: async () => {
-            throw new Error("restricted registration cannot replace config");
+  return retainPluginRegistryHandleForTest(
+    loadOpenClawPluginsWithInternalOverrides(
+      { ...options, cache: false },
+      {
+        runtime: {
+          config: {
+            current: () => options.config ?? {},
+            mutateConfigFile: async () => {
+              throw new Error("restricted registration cannot mutate config");
+            },
+            replaceConfigFile: async () => {
+              throw new Error("restricted registration cannot replace config");
+            },
           },
         },
+        moduleLoader: { installNativeSdkResolver: false, loaderFilename: import.meta.url },
       },
-      moduleLoader: { installNativeSdkResolver: false, loaderFilename: import.meta.url },
-    },
+    ),
   );
 }
 

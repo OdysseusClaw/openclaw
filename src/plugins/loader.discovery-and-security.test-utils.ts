@@ -7,7 +7,6 @@ import { toSafeImportPath } from "../shared/import-specifier.js";
 import { withEnv } from "../test-utils/env.js";
 import { writePersistedInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-records.js";
 import { warnWhenAllowlistIsOpen } from "./loader-provenance.js";
-import { loadOpenClawPluginCliRegistry, loadOpenClawPlugins } from "./loader.js";
 import {
   clearPluginLoaderCache,
   EMPTY_PLUGIN_SCHEMA,
@@ -18,6 +17,10 @@ import {
   useNoBundledPlugins,
   writePlugin,
 } from "./loader.test-fixtures.js";
+import {
+  loadOpenClawPluginCliRegistryForTest as loadOpenClawPluginCliRegistry,
+  loadOpenClawPluginsForTest as loadOpenClawPlugins,
+} from "./loader.test-handles.js";
 import {
   simplePluginBody,
   updatePluginManifest,

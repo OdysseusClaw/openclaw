@@ -28,13 +28,13 @@ import {
   claimPluginInteractiveCallbackDedupe,
   commitPluginInteractiveCallbackDedupe,
 } from "./interactive-state.js";
-import { loadOpenClawPlugins } from "./loader.js";
 import {
   makePluginLoaderTempDir,
   mkdirSafe,
   useNoBundledPlugins,
   writePlugin,
 } from "./loader.test-fixtures.js";
+import { loadOpenClawPluginsForTest as loadOpenClawPlugins } from "./loader.test-handles.js";
 import {
   getEmbeddingProvider,
   listEmbeddingProviders,

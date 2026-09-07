@@ -21,6 +21,11 @@ import {
   resolveOwningPluginIdsForModelRefs,
   resolveOwningPluginIdsForProviderRef,
 } from "./providers.js";
+import {
+  retainPluginRegistryResources,
+  type PluginRegistryHandle,
+  type PluginRegistryResourceClaim,
+} from "./registry-resources.js";
 import type { PluginRegistry } from "./registry-types.js";
 import { getActivePluginRegistryWorkspaceDir } from "./runtime.js";
 import { getPluginRuntimeGenerationRegistry } from "./runtime/generation-scope.js";
@@ -30,11 +35,13 @@ import {
 } from "./runtime/load-context.js";
 import type { ProviderPlugin } from "./types.js";
 
+export type PluginProvidersHandle = PluginRegistryResourceClaim & { providers: ProviderPlugin[] };
+
 export function createProviderRegistryResolver(dependencies: {
-  loadOpenClawPlugins: (options: PluginLoadOptions) => PluginRegistry;
+  loadOpenClawPlugins: (options: PluginLoadOptions) => PluginRegistryHandle;
   getRuntimePluginRegistryForLoadOptions: (
     options?: PluginLoadOptions,
-  ) => PluginRegistry | undefined;
+  ) => PluginRegistryHandle | undefined;
   isPluginRegistryLoadInFlight: (options?: PluginLoadOptions) => boolean;
 }) {
   const {
@@ -186,7 +193,7 @@ export function createProviderRegistryResolver(dependencies: {
   }
 
   function resolveSetupProviderPluginLoadState(
-    params: Parameters<typeof resolvePluginProvidersCore>[0],
+    params: Parameters<typeof acquirePluginProvidersCore>[0],
     base: ReturnType<typeof resolvePluginProviderLoadBase>,
     snapshot: PluginMetadataRegistryView,
   ) {
@@ -238,7 +245,7 @@ export function createProviderRegistryResolver(dependencies: {
   }
 
   function resolveRuntimeProviderPluginLoadState(
-    params: Parameters<typeof resolvePluginProvidersCore>[0],
+    params: Parameters<typeof acquirePluginProvidersCore>[0],
     base: ReturnType<typeof resolvePluginProviderLoadBase>,
     snapshot: PluginMetadataRegistryView,
   ) {
@@ -303,7 +310,7 @@ export function createProviderRegistryResolver(dependencies: {
   }
 
   function isPluginProvidersLoadInFlight(
-    params: Parameters<typeof resolvePluginProvidersCore>[0],
+    params: Parameters<typeof acquirePluginProvidersCore>[0],
   ): boolean {
     const { env, workspaceDir, snapshot } = resolveProviderMetadataLookup(params);
     const base = resolvePluginProviderLoadBase({ ...params, workspaceDir, env }, snapshot);
@@ -317,7 +324,7 @@ export function createProviderRegistryResolver(dependencies: {
     return isPluginRegistryLoadInFlight(loadState.loadOptions);
   }
 
-  function resolvePluginProvidersCore(params: {
+  function acquirePluginProvidersCore(params: {
     config?: PluginLoadOptions["config"];
     workspaceDir?: string;
     /** Use an explicit env when plugin roots should resolve independently from process.env. */
@@ -335,21 +342,30 @@ export function createProviderRegistryResolver(dependencies: {
     includeUntrustedWorkspacePlugins?: boolean;
     pluginMetadataSnapshot?: PluginMetadataRegistryView;
     skipIfLoadInFlight?: boolean;
-  }): ProviderPlugin[] {
+  }): PluginProvidersHandle & { registry?: PluginRegistry } {
+    const empty = () => ({ providers: [], release() {} });
     const { env, workspaceDir, snapshot } = resolveProviderMetadataLookup(params);
     const base = resolvePluginProviderLoadBase({ ...params, workspaceDir, env }, snapshot);
     if (params.mode === "setup") {
       const loadState = resolveSetupProviderPluginLoadState(params, base, snapshot);
       if (!loadState) {
-        return [];
+        return empty();
       }
       if (params.skipIfLoadInFlight && isPluginRegistryLoadInFlight(loadState.loadOptions)) {
-        return [];
+        return empty();
       }
-      const registry = loadOpenClawPlugins(loadState.loadOptions);
-      return registry.providers.map((entry) =>
-        Object.assign({}, entry.provider, { pluginId: entry.pluginId }),
-      );
+      const handle = loadOpenClawPlugins(loadState.loadOptions);
+      try {
+        return {
+          ...handle,
+          providers: handle.registry.providers.map((entry) =>
+            Object.assign({}, entry.provider, { pluginId: entry.pluginId }),
+          ),
+        };
+      } catch (error) {
+        handle.release();
+        throw error;
+      }
     }
     const loadState = resolveRuntimeProviderPluginLoadState(params, base, snapshot);
     const generationRegistry = getPluginRuntimeGenerationRegistry();
@@ -358,11 +374,11 @@ export function createProviderRegistryResolver(dependencies: {
       params.skipIfLoadInFlight &&
       isPluginRegistryLoadInFlight(loadState.loadOptions)
     ) {
-      return [];
+      return empty();
     }
     const onlyPluginIds = loadState.loadOptions.onlyPluginIds;
     // Prepared discovery must retain its exact runtime artifacts, including an empty selection.
-    const registry =
+    const borrowedRegistry =
       onlyPluginIds?.length === 0
         ? undefined
         : (generationRegistry ??
@@ -371,16 +387,28 @@ export function createProviderRegistryResolver(dependencies: {
             loadOptions: loadState.loadOptions,
             workspaceDir: base.workspaceDir,
             requiredPluginIds: onlyPluginIds,
-          }) ??
-          getRuntimePluginRegistryForLoadOptions(loadState.loadOptions));
-    if (!registry) {
-      return [];
+          }));
+    const handle = borrowedRegistry
+      ? { registry: borrowedRegistry, ...retainPluginRegistryResources(borrowedRegistry) }
+      : onlyPluginIds?.length === 0
+        ? undefined
+        : getRuntimePluginRegistryForLoadOptions(loadState.loadOptions);
+    if (!handle) {
+      return empty();
     }
 
-    return registry.providers
-      .filter((entry) => !onlyPluginIds || onlyPluginIds.includes(entry.pluginId))
-      .map((entry) => Object.assign({}, entry.provider, { pluginId: entry.pluginId }));
+    try {
+      return {
+        ...handle,
+        providers: handle.registry.providers
+          .filter((entry) => !onlyPluginIds || onlyPluginIds.includes(entry.pluginId))
+          .map((entry) => Object.assign({}, entry.provider, { pluginId: entry.pluginId })),
+      };
+    } catch (error) {
+      handle.release();
+      throw error;
+    }
   }
 
-  return { isPluginProvidersLoadInFlight, resolvePluginProvidersCore };
+  return { isPluginProvidersLoadInFlight, acquirePluginProvidersCore };
 }

@@ -2,10 +2,12 @@
 import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { registerRuntimeAuthProfileStoreMutationListener } from "./auth-profiles/runtime-snapshots.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
 import {
   PreparedModelRuntimeAuthPublicationOwner,
+  invalidatePreparedModelRuntimeOwnersForAuthMutation,
   type PreparedModelRuntimeAuthMutation,
 } from "./prepared-model-runtime-auth-publication.js";
 import { acquirePreparedModelRuntimeLeaseFromOwners } from "./prepared-model-runtime-lease.js";
@@ -33,6 +35,7 @@ import {
   resolvePreparedModelRuntimeOwnerBySnapshot,
   resolveConfiguredOwnerPublication,
   resolvePublishedOwner,
+  releasePreparedModelRuntimeOwnerResources,
   type PreparedModelRuntimeOwner,
   type PreparedModelRuntimeInput,
   type PreparedModelRuntimePublicationOptions,
@@ -81,6 +84,30 @@ let modelRuntimeBuildTimeoutMs = DEFAULT_MODEL_RUNTIME_BUILD_TIMEOUT_MS;
 
 const owners = new Map<string, PreparedModelRuntimeOwner>();
 const agentBuildCompletions = new Map<string, Promise<void>>();
+// Source and built copies keep their own publication gates and mutable owners.
+// Shutdown joins every copy without merging those independent admission states.
+resolveGlobalSingleton<
+  Set<{
+    owners: typeof owners;
+    agentBuildCompletions: typeof agentBuildCompletions;
+  }>
+>(
+  Symbol.for("openclaw.preparedModelRuntimeResourceOwnerStates"),
+  () => new Set(),
+  async (states) => {
+    const completions: Promise<void>[] = [];
+    for (const state of states) {
+      const closing = [...state.owners.values()];
+      state.owners.clear();
+      for (const owner of closing) {
+        owner.generation += 1;
+        releasePreparedModelRuntimeOwnerResources(owner);
+      }
+      completions.push(...state.agentBuildCompletions.values());
+    }
+    await Promise.all(completions);
+  },
+).add({ owners, agentBuildCompletions });
 const standaloneActivationTails = new Map<string, Promise<void>>();
 const retainedDirectRunOwners = new PreparedModelRuntimeOwnerRetention(1);
 const retainedGatewayRunOwners = new PreparedModelRuntimeOwnerRetention(8);
@@ -488,6 +515,7 @@ async function refreshPreparedModelRuntimeSnapshotsNow(
     }
     if (!knownKeys.has(key) && (gatewayLifecycleActive || owner.provenance === "configured")) {
       owners.delete(key);
+      releasePreparedModelRuntimeOwnerResources(owner);
     }
   }
   const candidates = entries.map(({ owner: existing, input }) => {
@@ -639,28 +667,8 @@ function invalidateForAuthMutation(event: PreparedModelRuntimeAuthMutation): voi
     ...event,
     agentDir: normalizeOptionalDir(event.agentDir),
   };
-  const staleError = new Error("prepared model runtime owner is stale after auth mutation");
-  const invalidatedOwners: PreparedModelRuntimeOwner[] = [];
-  const invalidatedConfiguredAgentIds = new Set<string>();
-  for (const owner of owners.values()) {
-    if (
-      !normalizedEvent.affectsInheritedStores &&
-      owner.input.agentDir !== normalizedEvent.agentDir &&
-      owner.input.inheritedAuthDir !== normalizedEvent.agentDir
-    ) {
-      continue;
-    }
-    invalidatedOwners.push(owner);
-    owner.generation += 1;
-    owner.needsRefresh = true;
-    owner.refreshError = staleError;
-    if (normalizedEvent.profileSetChanged) {
-      owner.catalogStale = true;
-    }
-    if (owner.provenance === "configured" && owner.input.agentId) {
-      invalidatedConfiguredAgentIds.add(owner.input.agentId);
-    }
-  }
+  const { invalidatedOwners, invalidatedConfiguredAgentIds } =
+    invalidatePreparedModelRuntimeOwnersForAuthMutation(owners.values(), normalizedEvent);
   if (invalidatedOwners.length === 0) {
     // A first owner reads the already-published auth snapshot while it builds. Replaying an earlier
     // mutation would immediately stale that initial generation even though no prior owner existed.
@@ -733,6 +741,9 @@ function resetPreparedModelRuntimeSnapshotsForTest(): void {
   );
   pendingModelRuntimeReplacement?.resolve();
   pendingModelRuntimeReplacement = undefined;
+  for (const owner of owners.values()) {
+    releasePreparedModelRuntimeOwnerResources(owner);
+  }
   owners.clear();
   agentBuildCompletions.clear();
   standaloneActivationTails.clear();

@@ -26,6 +26,12 @@ import type { PluginManifestRecord } from "./manifest-registry.js";
 import { hasManifestToolAvailability } from "./manifest-tool-availability.js";
 import type { PluginMetadataManifestView } from "./plugin-metadata-snapshot.types.js";
 import { capturePluginLifecycleAuthority } from "./registry-lifecycle.js";
+import {
+  getPluginRegistryResourceScope,
+  requirePluginRegistryResourceScope,
+  withPluginRegistryResourceOperationAsync,
+  withPluginRegistryResourceScope,
+} from "./registry-resources.js";
 import type { PluginRegistry, PluginToolRegistration } from "./registry-types.js";
 import {
   withPluginRuntimePluginScope,
@@ -87,6 +93,7 @@ function wrapPluginToolCallbacks(
   pluginRegistry: PluginRegistry | undefined,
   tool: AnyAgentTool,
 ): AnyAgentTool {
+  const creationScope = requirePluginRegistryResourceScope();
   const record = pluginRegistry?.plugins.find((candidate) => candidate.id === entry.pluginId);
   const authority = pluginRegistry
     ? capturePluginLifecycleAuthority(pluginRegistry, record, { scopedRuntime: true })
@@ -109,11 +116,16 @@ function wrapPluginToolCallbacks(
     signal?: AbortSignal,
     onUpdate?: unknown,
   ) =>
-    runScoped(
-      () =>
-        Reflect.apply(tool.execute, tool, [toolCallId, params, signal, onUpdate]) as ReturnType<
-          AnyAgentTool["execute"]
-        >,
+    runScoped(() =>
+      withPluginRegistryResourceScope(getPluginRegistryResourceScope() ?? creationScope, () =>
+        // Outer abort wrappers may settle early; the raw plugin promise still owns its resources.
+        withPluginRegistryResourceOperationAsync(
+          () =>
+            Reflect.apply(tool.execute, tool, [toolCallId, params, signal, onUpdate]) as ReturnType<
+              AnyAgentTool["execute"]
+            >,
+        ),
+      ),
     );
   const wrapped = new Proxy<AnyAgentTool>(tool, {
     get(target, prop) {
@@ -597,12 +609,14 @@ function resolvePluginToolRegistry(params: {
   runtimeRegistry?: PluginRegistry;
   manifestPlugins?: PluginMetadataManifestView["plugins"];
 }) {
+  const resources = requirePluginRegistryResourceScope();
   const requestedPluginIds = params.onlyPluginIds;
   // Tools belong to the prepared generation, even when
   // process-global discovery would select a different registry.
   if (
     registryHasScopedPluginTools(params.runtimeRegistry, requestedPluginIds, params.manifestPlugins)
   ) {
+    resources.retain(params.runtimeRegistry);
     return params.runtimeRegistry;
   }
   const activeRegistry = getLoadedRuntimePluginRegistry({
@@ -611,13 +625,16 @@ function resolvePluginToolRegistry(params: {
     requiredPluginIds: requestedPluginIds,
   });
   if (registryHasScopedPluginTools(activeRegistry, requestedPluginIds)) {
+    resources.retain(activeRegistry);
     return activeRegistry;
   }
-  const registry = loadPluginRegistryHandle({
-    ...params.loadOptions,
-    activate: false,
-    ...(requestedPluginIds === undefined ? {} : { onlyPluginIds: [...requestedPluginIds] }),
-  });
+  const registry = resources.adopt(
+    loadPluginRegistryHandle({
+      ...params.loadOptions,
+      activate: false,
+      ...(requestedPluginIds === undefined ? {} : { onlyPluginIds: [...requestedPluginIds] }),
+    }),
+  );
   return registry;
 }
 
@@ -729,7 +746,9 @@ export function ensureStandalonePluginToolRegistryLoaded(params: {
   if (!loadState) {
     return undefined;
   }
-  const registry = loadPluginRegistryHandle(loadState.loadOptions);
+  const registry = requirePluginRegistryResourceScope().adopt(
+    loadPluginRegistryHandle(loadState.loadOptions),
+  );
   if (registryHasScopedPluginTools(registry, loadState.onlyPluginIds)) {
     return registry;
   }

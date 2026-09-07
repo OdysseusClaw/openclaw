@@ -22,12 +22,12 @@ import {
   schedulePluginSessionTurn,
   unschedulePluginSessionTurnsByTag,
 } from "../host-hook-scheduled-turns.js";
-import { loadOpenClawPlugins } from "../loader.js";
 import {
   clearPluginLoaderCache,
   makePluginLoaderTempDir,
   writePlugin,
 } from "../loader.test-fixtures.js";
+import { loadOpenClawPluginsForTest as loadOpenClawPlugins } from "../loader.test-handles.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../runtime.js";
 import { createPluginRecord } from "../status.test-helpers.js";
 import type { OpenClawPluginApi } from "../types.js";

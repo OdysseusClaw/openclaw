@@ -16,7 +16,7 @@ import { createProviderAuthAvailability } from "./provider-auth-availability-cor
 import { createProviderExternalAuthResolver } from "./provider-external-auth-core.js";
 import { createProviderHookRuntime } from "./provider-hook-runtime-core.js";
 import { createProviderRegistryResolver } from "./providers.runtime-core.js";
-import type { PluginRegistry } from "./registry-types.js";
+import type { PluginRegistryHandle } from "./registry-resources.js";
 import { createRuntimeModelAuth } from "./runtime/runtime-model-auth.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
@@ -84,7 +84,7 @@ export const nativePluginBindings: Readonly<NativePluginBindings> = Object.freez
 export function resolvePluginCapabilityCatalogContext() {
   return loaderBindings.capabilityCatalogContext;
 }
-export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegistry {
+export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegistryHandle {
   return loadOpenClawPluginsCore(options, loaderBindings);
 }
 
@@ -94,7 +94,7 @@ export function loadOpenClawPluginsWithInternalOverrides(
     runtime: Pick<PluginRuntime, "config"> &
       Partial<Pick<PluginRuntime, "modelAuth" | "modelConfig">>;
   },
-): PluginRegistry {
+): PluginRegistryHandle {
   const runtimeModelAuth = overrides.runtime.modelAuth ??
     options.runtimeOptions?.modelAuth ?? { ...loaderBindings.modelAuth };
   const runtimeModelConfig = overrides.runtime.modelConfig ??
