@@ -8,7 +8,7 @@ import type {
 } from "openclaw/plugin-sdk/approval-handler-runtime";
 import type { ExecApprovalDecision } from "openclaw/plugin-sdk/approval-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { createMSTeamsApprovalToken } from "./approval-card-actions.js";
+import { msTeamsApprovalControls } from "./approval-card-actions.js";
 
 export type MSTeamsApprovalActionToken = {
   token: string;
@@ -106,7 +106,7 @@ export function buildMSTeamsPendingApprovalCard(params: {
         : "Exec";
   const actionTokens: MSTeamsApprovalActionToken[] = [];
   const actions = view.actions.map(({ decision, label }) => {
-    const token = createMSTeamsApprovalToken();
+    const token = msTeamsApprovalControls.createToken();
     actionTokens.push({ token, decision });
     return {
       type: "Action.Submit",
