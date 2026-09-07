@@ -1057,6 +1057,15 @@ snapshots; OpenClaw owns all persistence and lifecycle coordination.
     gateway.
 
   </Accordion>
+  <Accordion title="Exec policy helpers">
+    `openclaw/plugin-sdk/exec-approvals-runtime` exposes the host's exec mode
+    algebra: `resolveExecPolicyForMode(mode)` returns security, ask, and
+    auto-review settings; `resolveExecModeFromPolicy({ security, ask })` projects
+    a legacy pair to a display mode. `minSecurity(a, b)` chooses the more
+    restrictive security value, and `maxAsk(a, b)` chooses the stronger approval
+    requirement. Provider adapters retain their own strict input validation and
+    native sandbox/approval projection.
+  </Accordion>
   <Accordion title="api.runtime.system">
     System-level utilities.
 
